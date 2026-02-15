@@ -120,6 +120,79 @@ save_sankey_html(sankey_risk, out_file)
 sankey_risk
 ```
 
+### 3.4 Transition Matrix (Baseline → 10y)
+Calculate the transition matrix showing all state changes for the GP-linked cohort from baseline to 10 years.
+
+```{r}
+# Prepare timeline data for GP-linked participants within 0-10y window
+dt_pheno <- dt_timeline %>%
+  lazy_dt() %>%
+  inner_join(
+    dt_visits %>% lazy_dt() %>% filter(visit_index == 0) %>% select(eid, assessment_date),
+    by = "eid"
+  ) %>%
+  inner_join(dt_cohort %>% lazy_dt() %>% filter(has_gp) %>% select(eid), by = "eid") %>%
+  mutate(years_from_baseline = as.numeric(date - assessment_date) / 365.25) %>%
+  filter(years_from_baseline >= 0, years_from_baseline <= 10) %>%
+  filter(!is.na(kdigo)) %>%
+  select(eid, date, kdigo) %>%
+  as.data.table()
+
+# Calculate transition counts
+transition_counts <- dt_pheno %>%
+  group_by(eid) %>%
+  arrange(date) %>%
+  mutate(prev_state = lag(kdigo), state = kdigo) %>%
+  ungroup() %>%
+  filter(!is.na(state)) %>%
+  count(prev_state, state, name = "count") %>%
+  mutate(prev_state = coalesce(prev_state, "")) %>%
+  as_tibble()
+
+# Create transition matrix
+transition_matrix <- transition_counts %>%
+  pivot_wider(names_from = state, values_from = count, values_fill = 0)
+
+# Define KDIGO stage order by severity (G1A1 to G5A3, then Unclassified)
+kdigo_order <- c(
+  "G1A1", "G1A2", "G1A3",
+  "G2A1", "G2A2", "G2A3",
+  "G3A1", "G3A2", "G3A3",
+  "G3aA1", "G3aA2", "G3aA3",
+  "G3bA1", "G3bA2", "G3bA3",
+  "G4A1", "G4A2", "G4A3",
+  "G5A1", "G5A2", "G5A3",
+  "G1", "G2", "G3", "G3a", "G3b", "G4", "G5",
+  "A1", "A2", "A3",
+  "Unclassified"
+)
+
+# Order rows: empty string first (baseline), then severity order, then any unmatched
+all_prev_states <- unique(transition_matrix$prev_state)
+ordered_prev_states <- intersect(kdigo_order, all_prev_states)
+unordered_prev_states <- setdiff(all_prev_states, c("", kdigo_order))
+row_order <- c("", ordered_prev_states, unordered_prev_states)
+transition_matrix <- transition_matrix %>%
+  mutate(prev_state = factor(prev_state, levels = row_order)) %>%
+  arrange(prev_state)
+
+# Order columns: severity order for all states that exist, then any unmatched
+all_cols <- setdiff(names(transition_matrix), "prev_state")
+ordered_cols <- intersect(kdigo_order, all_cols)
+unordered_cols <- setdiff(all_cols, kdigo_order)
+col_order <- c("prev_state", ordered_cols, unordered_cols)
+transition_matrix <- transition_matrix %>%
+  select(all_of(col_order))
+
+transition_matrix %>% print()
+
+# Save to CSV and upload
+out_file <- "data/outputs/R07-transition_matrix.csv"
+dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
+write_csv(transition_matrix, out_file)
+upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-transition_matrix.csv")
+```
+
 ## 4. KDIGO Risk Distribution
 ```{r fig.width=8, fig.height=4}
 kdigo_risk_colours <- c(

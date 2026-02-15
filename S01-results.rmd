@@ -475,7 +475,120 @@ flowchart_gp_10y <- compute_flowchart(eids_eligible_gp, dt_tl_gp_10y)
 print_flowchart(flowchart_gp_10y)
 ```
 
-## 9. Save
+## 9. Age- and Sex-Stratified Baseline Prevalence
+
+Compute baseline CKD prevalence stratified by age group and sex, for both the
+full eligible cohort and the GP-linked sub-cohort.
+
+```{r}
+# Derive age at baseline
+dt_demog <- dt_cohort %>%
+  lazy_dt() %>%
+  mutate(
+    age_at_baseline = as.numeric(baseline_date - date_of_birth) / 365.25,
+    age_group = cut(
+      age_at_baseline,
+      breaks = c(-Inf, 50, 55, 60, 65, 70, Inf),
+      labels = c("<50", "50-54", "55-59", "60-64", "65-69", "70+"),
+      right = FALSE
+    )
+  ) %>%
+  select(eid, sex, age_at_baseline, age_group) %>%
+  as.data.table()
+
+#' Build age-sex-stratified prevalence table
+#'
+#' @param eids_elig Character vector of eligible eids
+#' @param dt_bl Baseline staging table (eid, stage, kdigo_risk)
+#' @param dt_dem Demographics table with age_group and sex
+#' @return data.table with prevalence counts and percentages
+stratified_prevalence <- function(eids_elig, dt_bl, dt_dem) {
+  # Join eligible participants with demographics and baseline staging
+
+  dt_prev <- data.table(eid = eids_elig) %>%
+    inner_join(dt_dem, by = "eid") %>%
+    left_join(dt_bl %>% select(eid, stage, kdigo_risk), by = "eid") %>%
+    mutate(
+      has_ckd = !is.na(stage),
+      ckd_stage_3plus = stage %in% c("G3", "G3a", "G3b", "G4", "G5")
+    ) %>%
+    as.data.table()
+
+  # Stratified summary
+  strat <- dt_prev[, .(
+    n_total      = .N,
+    n_ckd        = sum(has_ckd),
+    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
+  ), by = .(age_group, sex)]
+
+  # Overall row per age group
+  by_age <- dt_prev[, .(
+    sex          = "All",
+    n_total      = .N,
+    n_ckd        = sum(has_ckd),
+    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
+  ), by = .(age_group)]
+
+  # Overall row per sex
+  by_sex <- dt_prev[, .(
+    age_group    = "All",
+    n_total      = .N,
+    n_ckd        = sum(has_ckd),
+    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
+  ), by = .(sex)]
+
+  # Grand total
+  grand <- dt_prev[, .(
+    age_group    = "All",
+    sex          = "All",
+    n_total      = .N,
+    n_ckd        = sum(has_ckd),
+    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
+  )]
+
+  out <- rbindlist(list(strat, by_age, by_sex, grand), use.names = TRUE) %>%
+    mutate(
+      prev_ckd_pct        = round(100 * n_ckd / n_total, 2),
+      prev_stage3plus_pct = round(100 * n_stage3plus / n_total, 2)
+    ) %>%
+    arrange(
+      factor(age_group, levels = c("<50", "50-54", "55-59", "60-64", "65-69", "70+", "All")),
+      factor(sex, levels = c("Female", "Male", "All"))
+    ) %>%
+    as.data.table()
+
+  out
+}
+```
+
+### 9.1 Full Cohort
+```{r}
+prev_full <- stratified_prevalence(eids_eligible, dt_baseline, dt_demog)
+
+cat("\n=== Age- and Sex-Stratified Baseline Prevalence: Full Cohort ===\n")
+print(prev_full, nrows = Inf)
+
+out_file_full <- "data/outputs/S01-prevalence-baseline-full.csv"
+dir.create(dirname(out_file_full), showWarnings = FALSE, recursive = TRUE)
+fwrite(prev_full, out_file_full)
+upload_to_dx(out_file_full, "ukb-kdsc-staging/outputs/S01-prevalence-baseline-full.csv")
+cat(sprintf("Saved: %s\n", out_file_full))
+```
+
+### 9.2 GP-Linked Sub-Cohort
+```{r}
+prev_gp <- stratified_prevalence(eids_eligible_gp, dt_baseline, dt_demog)
+
+cat("\n=== Age- and Sex-Stratified Baseline Prevalence: GP-Linked ===\n")
+print(prev_gp, nrows = Inf)
+
+out_file_gp <- "data/outputs/S01-prevalence-baseline-gp.csv"
+fwrite(prev_gp, out_file_gp)
+upload_to_dx(out_file_gp, "ukb-kdsc-staging/outputs/S01-prevalence-baseline-gp.csv")
+cat(sprintf("Saved: %s\n", out_file_gp))
+```
+
+## 10. Save
 ```{r}
 out_file <- "data/outputs/S01-results-flowchart.rds"
 dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
