@@ -70,11 +70,11 @@ run_table_exporter <- function(field_file, entity, output_name, dest_folder,
   dataset_file <- system("dx ls *.dataset", intern = TRUE)
 
   # Upload field list and capture file ID
-  file_id <- system(sprintf("dx upload %s --destination ukb-kdsc-staging/ --brief", field_file), intern = TRUE)
+  file_id <- system(sprintf("dx upload %s --destination ukb-kdsc-staging/extracted/ --brief", field_file), intern = TRUE)
 
   # Run table exporter (pass uploaded file via -field_names_file_txt)
   cmd <- sprintf(
-    "dx run table-exporter -idataset_or_cohort_or_dashboard=%s -ientity=%s -ifield_names_file_txt=%s -ioutput=%s --instance-type %s --brief -y",
+    "dx run table-exporter -idataset_or_cohort_or_dashboard=%s -ientity=%s -ifield_names_file_txt=%s --destination=%s --instance-type %s --brief -y",
     dataset_file, entity, file_id, output_name, instance_type
   )
   job_id <- system(cmd, intern = TRUE)
