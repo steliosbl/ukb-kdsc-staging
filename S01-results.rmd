@@ -504,53 +504,75 @@ dt_demog <- dt_cohort %>%
 #' @return data.table with prevalence counts and percentages
 stratified_prevalence <- function(eids_elig, dt_bl, dt_dem) {
   # Join eligible participants with demographics and baseline staging
-
   dt_prev <- data.table(eid = eids_elig) %>%
     inner_join(dt_dem, by = "eid") %>%
-    left_join(dt_bl %>% select(eid, stage, kdigo_risk), by = "eid") %>%
+    left_join(dt_bl %>% select(eid, stage, albuminuria, kdigo_risk), by = "eid") %>%
     mutate(
       has_ckd = !is.na(stage),
-      ckd_stage_3plus = stage %in% c("G3", "G3a", "G3b", "G4", "G5")
+      # Per-GFR-stage flags
+      is_G1  = (stage == "G1"),
+      is_G2  = (stage == "G2"),
+      is_G3a = (stage == "G3a"),
+      is_G3b = (stage == "G3b"),
+      is_G4  = (stage == "G4"),
+      is_G5  = (stage == "G5"),
+      ckd_stage_3plus = stage %in% c("G3", "G3a", "G3b", "G4", "G5"),
+      # Per-albuminuria flags
+      is_A1 = (albuminuria == "A1"),
+      is_A2 = (albuminuria == "A2"),
+      is_A3 = (albuminuria == "A3"),
+      # Per-KDIGO-risk flags
+      risk_low      = (kdigo_risk == "Low"),
+      risk_moderate = (kdigo_risk == "Moderately increased"),
+      risk_high     = (kdigo_risk == "High"),
+      risk_veryhigh = (kdigo_risk == "Very high")
     ) %>%
     as.data.table()
 
-  # Stratified summary
-  strat <- dt_prev[, .(
-    n_total      = .N,
-    n_ckd        = sum(has_ckd),
-    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
-  ), by = .(age_group, sex)]
+  # Helper: compute all summary columns from a dt_prev subset
+  .summarise_block <- function(dt) {
+    dt[, .(
+      n_total       = .N,
+      n_ckd         = sum(has_ckd, na.rm = TRUE),
+      n_G1          = sum(is_G1, na.rm = TRUE),
+      n_G2          = sum(is_G2, na.rm = TRUE),
+      n_G3a         = sum(is_G3a, na.rm = TRUE),
+      n_G3b         = sum(is_G3b, na.rm = TRUE),
+      n_G4          = sum(is_G4, na.rm = TRUE),
+      n_G5          = sum(is_G5, na.rm = TRUE),
+      n_stage3plus  = sum(ckd_stage_3plus, na.rm = TRUE),
+      n_A1          = sum(is_A1, na.rm = TRUE),
+      n_A2          = sum(is_A2, na.rm = TRUE),
+      n_A3          = sum(is_A3, na.rm = TRUE),
+      n_risk_low    = sum(risk_low, na.rm = TRUE),
+      n_risk_mod    = sum(risk_moderate, na.rm = TRUE),
+      n_risk_high   = sum(risk_high, na.rm = TRUE),
+      n_risk_vhigh  = sum(risk_veryhigh, na.rm = TRUE)
+    )]
+  }
 
-  # Overall row per age group
-  by_age <- dt_prev[, .(
-    sex          = "All",
-    n_total      = .N,
-    n_ckd        = sum(has_ckd),
-    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
-  ), by = .(age_group)]
+  # Stratified by age_group x sex
+  strat <- dt_prev[, .summarise_block(.SD), by = .(age_group, sex)]
 
-  # Overall row per sex
-  by_sex <- dt_prev[, .(
-    age_group    = "All",
-    n_total      = .N,
-    n_ckd        = sum(has_ckd),
-    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
-  ), by = .(sex)]
+  # Marginal by age_group
+  by_age <- dt_prev[, c(.(sex = "All"), .summarise_block(.SD)), by = .(age_group)]
+
+  # Marginal by sex
+  by_sex <- dt_prev[, c(.(age_group = "All"), .summarise_block(.SD)), by = .(sex)]
 
   # Grand total
-  grand <- dt_prev[, .(
-    age_group    = "All",
-    sex          = "All",
-    n_total      = .N,
-    n_ckd        = sum(has_ckd),
-    n_stage3plus = sum(ckd_stage_3plus, na.rm = TRUE)
-  )]
+  grand <- dt_prev[, c(.(age_group = "All", sex = "All"), .summarise_block(.SD))]
 
-  out <- rbindlist(list(strat, by_age, by_sex, grand), use.names = TRUE) %>%
-    mutate(
-      prev_ckd_pct        = round(100 * n_ckd / n_total, 2),
-      prev_stage3plus_pct = round(100 * n_stage3plus / n_total, 2)
-    ) %>%
+  out <- rbindlist(list(strat, by_age, by_sex, grand), use.names = TRUE)
+
+  # Compute prevalence percentages for all count columns
+  count_cols <- setdiff(names(out), c("age_group", "sex", "n_total"))
+  for (col in count_cols) {
+    pct_col <- sub("^n_", "pct_", col)
+    out[, (pct_col) := round(100 * get(col) / n_total, 2)]
+  }
+
+  out <- out %>%
     arrange(
       factor(age_group, levels = c("<50", "50-54", "55-59", "60-64", "65-69", "70+", "All")),
       factor(sex, levels = c("Female", "Male", "All"))
@@ -561,31 +583,96 @@ stratified_prevalence <- function(eids_elig, dt_bl, dt_dem) {
 }
 ```
 
-### 9.1 Full Cohort
+### 9.1 Formatting Helper
 ```{r}
-prev_full <- stratified_prevalence(eids_eligible, dt_baseline, dt_demog)
+# Row definitions: display label -> count column in stratified_prevalence output
+prev_row_defs <- c(
+  "N"              = "n_total",
+  "Any CKD"        = "n_ckd",
+  "G1"             = "n_G1",
+  "G2"             = "n_G2",
+  "G3a"            = "n_G3a",
+  "G3b"            = "n_G3b",
+  "G4"             = "n_G4",
+  "G5"             = "n_G5",
+  "Stage 3+"       = "n_stage3plus",
+  "A1"             = "n_A1",
+  "A2"             = "n_A2",
+  "A3"             = "n_A3",
+  "Low risk"       = "n_risk_low",
+  "Moderate risk"  = "n_risk_mod",
+  "High risk"      = "n_risk_high",
+  "Very high risk" = "n_risk_vhigh"
+)
 
-cat("\n=== Age- and Sex-Stratified Baseline Prevalence: Full Cohort ===\n")
-print(prev_full, nrows = Inf)
+age_levels <- c("<50", "50-54", "55-59", "60-64", "65-69", "70+", "All")
 
-out_file_full <- "data/outputs/S01-prevalence-baseline-full.csv"
-dir.create(dirname(out_file_full), showWarnings = FALSE, recursive = TRUE)
-fwrite(prev_full, out_file_full)
-upload_to_dx(out_file_full, "ukb-kdsc-staging/outputs/S01-prevalence-baseline-full.csv")
-cat(sprintf("Saved: %s\n", out_file_full))
+#' Pivot stratified prevalence into presentation format:
+#'   rows = stages/categories, columns = age buckets, cells = "n (x.x%)"
+#'
+#' @param dt_prev Output of stratified_prevalence()
+#' @param sex_filter One of "Female", "Male", "All"
+#' @return data.table with row_label + one column per age bucket
+format_prev_table <- function(dt_prev, sex_filter) {
+  dt_sub <- dt_prev[sex == sex_filter]
+  dt_sub[, age_group := factor(age_group, levels = age_levels)]
+  setorder(dt_sub, age_group)
+
+  # Build one row per metric, one column per age bucket
+  rows <- lapply(names(prev_row_defs), function(label) {
+    col <- prev_row_defs[[label]]
+    cells <- vapply(age_levels, function(ag) {
+      r <- dt_sub[age_group == ag]
+      if (nrow(r) == 0) return("")
+      n <- r[[col]]
+      # N row: just the count; everything else: n (pct%)
+      if (label == "N") {
+        format(n, big.mark = ",")
+      } else {
+        n_total <- r[["n_total"]]
+        sprintf("%s (%.1f%%)", format(n, big.mark = ","), 100 * n / n_total)
+      }
+    }, character(1))
+    as.list(c(row_label = label, cells))
+  })
+
+  out <- rbindlist(rows)
+  setnames(out, c("", age_levels))
+  out
+}
 ```
 
-### 9.2 GP-Linked Sub-Cohort
+### 9.2 Full Cohort
+```{r}
+prev_full <- stratified_prevalence(eids_eligible, dt_baseline, dt_demog)
+dir.create("data/outputs", showWarnings = FALSE, recursive = TRUE)
+
+for (sx in c("Female", "Male", "All")) {
+  tbl <- format_prev_table(prev_full, sx)
+  cat(sprintf("\n=== Baseline Prevalence: Full Cohort — %s ===\n", sx))
+  print(tbl, nrows = Inf)
+
+  out_f <- sprintf("data/outputs/S01-prevalence-baseline-full-%s.csv", tolower(sx))
+  fwrite(tbl, out_f)
+  upload_to_dx(out_f, sprintf("ukb-kdsc-staging/outputs/S01-prevalence-baseline-full-%s.csv", tolower(sx)))
+  cat(sprintf("Saved: %s\n", out_f))
+}
+```
+
+### 9.3 GP-Linked Sub-Cohort
 ```{r}
 prev_gp <- stratified_prevalence(eids_eligible_gp, dt_baseline, dt_demog)
 
-cat("\n=== Age- and Sex-Stratified Baseline Prevalence: GP-Linked ===\n")
-print(prev_gp, nrows = Inf)
+for (sx in c("Female", "Male", "All")) {
+  tbl <- format_prev_table(prev_gp, sx)
+  cat(sprintf("\n=== Baseline Prevalence: GP-Linked — %s ===\n", sx))
+  print(tbl, nrows = Inf)
 
-out_file_gp <- "data/outputs/S01-prevalence-baseline-gp.csv"
-fwrite(prev_gp, out_file_gp)
-upload_to_dx(out_file_gp, "ukb-kdsc-staging/outputs/S01-prevalence-baseline-gp.csv")
-cat(sprintf("Saved: %s\n", out_file_gp))
+  out_f <- sprintf("data/outputs/S01-prevalence-baseline-gp-%s.csv", tolower(sx))
+  fwrite(tbl, out_f)
+  upload_to_dx(out_f, sprintf("ukb-kdsc-staging/outputs/S01-prevalence-baseline-gp-%s.csv", tolower(sx)))
+  cat(sprintf("Saved: %s\n", out_f))
+}
 ```
 
 ## 10. Save
