@@ -1,0 +1,498 @@
+---
+title: "CKD Staging Results"
+format: html
+---
+
+# Study 1: KDIGO CKD Staging in UK Biobank
+We present the results of the KDIGO-based CKD staging algorithm applied to the
+full UK Biobank cohort, summarising inclusion, code extraction, biomarker
+distributions, and the algorithm flowchart numbers needed for the manuscript.
+
+## 0. Setup
+```{r}
+source(knitr::purl("R00-parameters.rmd", quiet = TRUE, output = tempfile()))
+
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+library(arrow)
+library(ggplot2)
+library(cowplot)
+options(scipen = 999)
+
+source("lib/plot_covariates.R")
+```
+
+## 1. Data Sources
+All biomarker data (eGFR, ACR, and their components) come from the pipeline
+outputs (R03-fields, R04-gp). Staging and eligibility come from R06-algorithm.
+```{r}
+dt_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
+dt_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
+dt_biomarkers_ukb <- read_parquet("data/biomarkers_ukb.parquet") %>% as.data.table()
+dt_biomarkers_gp <- read_parquet("data/biomarkers_gp.parquet") %>% as.data.table()
+dt_biomarkers <- rbind(dt_biomarkers_ukb, dt_biomarkers_gp, fill = TRUE)
+dt_matched <- read_parquet("data/ckd_matched_events.parquet") %>% as.data.table()
+dt_timeline <- read_parquet("data/ckd_timeline.parquet") %>% as.data.table()
+dt_baseline <- read_parquet("data/ckd_baseline.parquet") %>% as.data.table()
+dt_10y <- read_parquet("data/ckd_10y.parquet") %>% as.data.table()
+dt_eligible <- read_parquet("data/ckd_eligible.parquet") %>% as.data.table()
+
+# GP code match summary (saved by R04-gp.rmd)
+dt_gp_code_summary <- read_parquet("data/gp_code_summary.parquet") %>% as.data.table()
+```
+
+## 2. Inclusion Cohort
+```{r}
+n_total <- nrow(dt_cohort)
+n_gp <- sum(dt_cohort$has_gp)
+eids_eligible <- dt_eligible$eid
+n_eligible <- length(eids_eligible)
+
+n_coded <- sum(grepl("coded_ckd", dt_eligible$reasons))
+n_egfr_pair <- sum(grepl("egfr_pair", dt_eligible$reasons))
+
+cat("\n=== Inclusion Cohort ===\n")
+cat(sprintf("Total UKB cohort:         %s\n", format(n_total, big.mark = ",")))
+cat(sprintf(
+  "With GP linkage:          %s (%.1f%% of total)\n",
+  format(n_gp, big.mark = ","), 100 * n_gp / n_total
+))
+cat(sprintf(
+  "With coded CKD match:     %s (%.1f%% of total)\n",
+  format(n_coded, big.mark = ","), 100 * n_coded / n_total
+))
+cat(sprintf(
+  "With eGFR pair:           %s (%.1f%% of total)\n",
+  format(n_egfr_pair, big.mark = ","), 100 * n_egfr_pair / n_total
+))
+cat(sprintf(
+  "Eligible (union):         %s (%.1f%% of total)\n",
+  format(n_eligible, big.mark = ","), 100 * n_eligible / n_total
+))
+```
+
+## 3. Code Extraction Summary
+
+### 3.1 Hospital Code Matches
+```{r}
+code_summary <- dt_matched %>%
+  lazy_dt() %>%
+  group_by(name, code, source) %>%
+  summarise(
+    n_events = n(),
+    n_participants = n_distinct(eid),
+    .groups = "drop"
+  ) %>%
+  arrange(name, desc(n_events)) %>%
+  as.data.table()
+
+cat("\n=== Code Extraction: All Sources ===\n")
+# print(code_summary, nrows = Inf)
+
+category_summary <- dt_matched %>%
+  lazy_dt() %>%
+  group_by(name, source) %>%
+  summarise(
+    n_events = n(),
+    n_participants = n_distinct(eid),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_events)) %>%
+  as.data.table()
+
+cat("\n=== Code Extraction: By Category and Source ===\n")
+print(category_summary, nrows = Inf)
+```
+
+### 3.2 Coded CKD Stages
+```{r}
+ckd_stage_codes <- list(
+  stage_1 = "N181", stage_2 = "N182", stage_3 = "N183",
+  stage_4 = "N184", stage_5 = "N185", esrd = "N186", nos = "N189"
+)
+
+dt_coded_ckd <- dt_matched %>% filter(name == "coded_ckd")
+
+coded_stage_summary <- dt_coded_ckd %>%
+  lazy_dt() %>%
+  mutate(stage_label = case_when(
+    code %in% ckd_stage_codes$stage_1 ~ "Stage 1 (N181)",
+    code %in% ckd_stage_codes$stage_2 ~ "Stage 2 (N182)",
+    code %in% ckd_stage_codes$stage_3 ~ "Stage 3 (N183)",
+    code %in% ckd_stage_codes$stage_4 ~ "Stage 4 (N184)",
+    code %in% ckd_stage_codes$stage_5 ~ "Stage 5 (N185)",
+    code %in% ckd_stage_codes$esrd ~ "ESRD (N186)",
+    code %in% ckd_stage_codes$nos ~ "NOS (N189)",
+    TRUE ~ paste0("Other (", code, ")")
+  )) %>%
+  group_by(stage_label, source) %>%
+  summarise(n_events = n(), n_participants = n_distinct(eid), .groups = "drop") %>%
+  arrange(stage_label, source) %>%
+  as.data.table()
+
+cat("\n=== Coded CKD Stages by Source ===\n")
+print(coded_stage_summary, nrows = Inf)
+
+n_gp_coded <- dt_coded_ckd %>%
+  filter(source == "primary_care") %>%
+  nrow()
+n_gp_coded_eids <- dt_coded_ckd %>%
+  filter(source == "primary_care") %>%
+  distinct(eid) %>%
+  nrow()
+cat(sprintf("\nGP-sourced coded CKD: %d events, %d participants\n", n_gp_coded, n_gp_coded_eids))
+
+n_selfreport <- dt_matched %>%
+  filter(source == "self_report") %>%
+  nrow()
+n_selfreport_eids <- dt_matched %>%
+  filter(source == "self_report") %>%
+  distinct(eid) %>%
+  nrow()
+cat(sprintf("Self-reported kidney disease: %d events, %d participants\n", n_selfreport, n_selfreport_eids))
+```
+
+## 4. Numerical Variable Summary
+
+### 4.1 GP Read Code Match Counts
+Pre-computed by R04-gp.rmd during GP biomarker extraction.
+```{r}
+cat("\n=== GP Read Code Matches (Top Codes per Type) ===\n")
+for (t in unique(dt_gp_code_summary$type)) {
+  cat(sprintf("\n--- %s ---\n", toupper(t)))
+  dt_gp_code_summary %>%
+    filter(type == t) %>%
+    head(5) %>%
+    print()
+}
+```
+
+### 4.2 Biomarker Distributions
+Component biomarkers (creat, cyst, uriamac, uriacc) are now included in the
+biomarkers_ukb.parquet output from R03-fields.rmd, so no separate raw file is
+needed.
+```{r fig.width=11.7, fig.height=8.3}
+variable_labels <- list(
+  egfr = "eGFR", acr = "ACR", creat = "Creat",
+  cyst = "Cyst.C", uriamac = "U.Alb", uriacc = "U.Creat"
+)
+
+variable_ranges <- list(
+  egfr = c(5, 120), acr = c(0, 3000), creat = c(0.5, 15),
+  cyst = c(0.3, 5.0), uriamac = c(0, 1000), uriacc = c(0.9, 35)
+)
+
+variable_units <- list(
+  egfr = "mL/min/1.73m2", acr = "mg/g", creat = "mg/dL",
+  cyst = "mg/L", uriamac = "mg/L", uriacc = "mmol/L"
+)
+
+plot_covariate_distributions(
+  dt_covariates = dt_biomarkers %>%
+    filter(type %in% names(variable_labels)),
+  dt_cohort = dt_cohort,
+  binary_vars = c(),
+  out_file = "outputs/S01-biomarker-distributions.pdf",
+  plot_title = "Biomarker distributions by sex (UKB + GP)",
+  variable_labels = variable_labels,
+  variable_ranges = variable_ranges,
+  variable_units = variable_units
+)
+```
+
+## 5. Algorithm Flowchart Function
+Derives all flowchart numbers from the timeline's cumulative boolean flags.
+The timeline already encodes eGFR categories (egfr_g1-g5), ACR categories
+(acr_a1-a3), coded CKD flags, and the final stage/albuminuria assignments
+from R06, so no raw biomarker or matched-event data is needed.
+```{r}
+#' Compute algorithm flowchart numbers from the pre-computed timeline.
+#'
+#' @param eids_elig Character vector of eligible eids (denominator)
+#' @param dt_tl Timeline table, pre-filtered to relevant eids and date range.
+#'   Must contain cumulative boolean flags and stage/albuminuria columns.
+#' @return Named list of flowchart numbers
+compute_flowchart <- function(eids_elig, dt_tl) {
+  # Last timeline record per eligible participant (cumulative state)
+  dt_last <- dt_tl %>%
+    lazy_dt() %>%
+    filter(eid %in% eids_elig) %>%
+    group_by(eid) %>%
+    arrange(desc(date)) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    as.data.table()
+
+  # Left-join so eids with no timeline records (before cutoff) get FALSE flags
+  dt_fc <- data.table(eid = eids_elig) %>%
+    left_join(dt_last, by = "eid") %>%
+    mutate(across(where(is.logical), ~ coalesce(., FALSE))) %>%
+    as.data.table()
+
+  # Derived flags
+  dt_fc[, has_egfr_lt90 := egfr_g2 | egfr_g3a | egfr_g3b | egfr_g4 | egfr_g5]
+  dt_fc[, has_any_egfr := egfr_g1 | has_egfr_lt90]
+  dt_fc[, has_acr := acr_a1 | acr_a2 | acr_a3]
+  dt_fc[, has_coded_ckd := coded_ckd | stage_1 | stage_2 | stage_3 | stage_4 | stage_5]
+
+  n_elig <- length(eids_elig)
+
+  # Step 1: eGFR >= 90 or no eGFR?
+  dt_s1_yes <- dt_fc[(has_egfr_lt90 == FALSE)]
+  dt_s1_no <- dt_fc[(has_egfr_lt90 == TRUE)]
+
+  # Step 2 (among Step 1 YES): has ACR?
+  dt_s2_yes <- dt_s1_yes[(has_acr == TRUE)]
+  dt_s2_no <- dt_s1_yes[(has_acr == FALSE)]
+
+  # ACR ranges (worst-ever category, consistent with algorithm)
+  acr_ranges <- dt_s2_yes %>%
+    mutate(acr_cat = case_when(
+      acr_a3 ~ "A3 (>= 300)",
+      acr_a2 ~ "A2 (30-299)",
+      acr_a1 ~ "A1 (< 30)"
+    )) %>%
+    count(acr_cat)
+
+  # Step 3 (among Step 2 NO): has coded CKD?
+  dt_s3_yes <- dt_s2_no[(has_coded_ckd == TRUE)]
+  dt_s3_no <- dt_s2_no[(has_coded_ckd == FALSE)]
+
+  # eGFR buckets (among Step 1 NO, worst-ever category from flags)
+  egfr_buckets <- dt_s1_no %>%
+    mutate(egfr_cat = case_when(
+      egfr_g5 ~ "G5 (< 15)",
+      egfr_g4 ~ "G4 (15-29)",
+      egfr_g3b ~ "G3b (30-44)",
+      egfr_g3a ~ "G3a (45-59)",
+      egfr_g2 ~ "G2 (60-89)"
+    )) %>%
+    count(egfr_cat)
+
+  # GFR stage and GFR-ACR matrix (from pre-computed stage/albuminuria columns)
+  gfr_stages <- dt_last %>%
+    filter(!is.na(stage)) %>%
+    count(stage) %>%
+    arrange(factor(stage, levels = c("G1", "G2", "G3", "G3a", "G3b", "G4", "G5")))
+
+  gfr_acr <- dt_last %>%
+    filter(!is.na(stage) & !is.na(albuminuria)) %>%
+    count(stage, albuminuria) %>%
+    arrange(
+      factor(stage, levels = c("G1", "G2", "G3", "G3a", "G3b", "G4", "G5")),
+      albuminuria
+    )
+
+  list(
+    n_eligible = n_elig,
+    n_congenital = sum(dt_fc$congenital),
+    n_transplant = sum(dt_fc$transplant),
+    n_dialysis = sum(dt_fc$dialysis),
+    step1_yes = nrow(dt_s1_yes), step1_no = nrow(dt_s1_no),
+    n_egfr_ge90 = sum(dt_s1_yes$has_any_egfr),
+    n_no_egfr = sum(!dt_s1_yes$has_any_egfr),
+    step2_yes = nrow(dt_s2_yes), step2_no = nrow(dt_s2_no),
+    acr_ranges = acr_ranges,
+    step3_yes = nrow(dt_s3_yes), step3_no = nrow(dt_s3_no),
+    egfr_buckets = egfr_buckets, gfr_stages = gfr_stages, gfr_acr = gfr_acr
+  )
+}
+
+#' Print a flowchart result list.
+print_flowchart <- function(fc) {
+  pctf <- function(n) sprintf("%s (%.1f%%)", format(n, big.mark = ","), 100 * n / fc$n_eligible)
+
+  cat(sprintf("(i)    Eligible:                       %s\n", pctf(fc$n_eligible)))
+  cat(sprintf("(ii)   Congenital:                     %s\n", pctf(fc$n_congenital)))
+  cat(sprintf("       Transplant:                     %s\n", pctf(fc$n_transplant)))
+  cat(sprintf("       Dialysis:                       %s\n", pctf(fc$n_dialysis)))
+  cat(sprintf("(iii)  Step 1 Yes (eGFR>=90/no eGFR):  %s\n", pctf(fc$step1_yes)))
+  cat(sprintf("       Step 1 No (eGFR<90):            %s\n", pctf(fc$step1_no)))
+  cat(sprintf("(iv)   Step 2 Yes (has ACR):            %s\n", pctf(fc$step2_yes)))
+  cat(sprintf("       Step 2 No (no ACR):              %s\n", pctf(fc$step2_no)))
+  cat("(v)    Step 2.1 ACR ranges:\n")
+  for (i in seq_len(nrow(fc$acr_ranges))) {
+    cat(sprintf("         %s: %s\n", fc$acr_ranges$acr_cat[i], pctf(fc$acr_ranges$n[i])))
+  }
+  cat(sprintf("(vi)   Step 3 Yes (coded CKD):          %s\n", pctf(fc$step3_yes)))
+  cat(sprintf("       Step 3 No (no coded CKD):        %s\n", pctf(fc$step3_no)))
+  cat(sprintf("(vii)  Step 3.1 Coded diagnosis route:  %s\n", pctf(fc$step3_yes)))
+  cat(sprintf("(viii) Step 3.2 CKD-NOS:                %s\n", pctf(fc$step3_no)))
+  cat("(ix)   Step 4 eGFR buckets:\n")
+  for (i in seq_len(nrow(fc$egfr_buckets))) {
+    cat(sprintf("         %s: %s\n", fc$egfr_buckets$egfr_cat[i], pctf(fc$egfr_buckets$n[i])))
+  }
+  cat("(x)    Step 4.1 CKD GFR stage:\n")
+  for (i in seq_len(nrow(fc$gfr_stages))) {
+    cat(sprintf("         %s: %s\n", fc$gfr_stages$stage[i], pctf(fc$gfr_stages$n[i])))
+  }
+  cat("(xi)   Step 4.2 GFR-ACR sub-stages:\n")
+  for (i in seq_len(nrow(fc$gfr_acr))) {
+    cat(sprintf(
+      "         %s/%s: %s\n",
+      fc$gfr_acr$stage[i], fc$gfr_acr$albuminuria[i], pctf(fc$gfr_acr$n[i])
+    ))
+  }
+  if (nrow(fc$gfr_acr) > 0) {
+    cat("\n  KDIGO GFR x ACR Matrix:\n")
+    fc$gfr_acr %>%
+      select(stage, albuminuria, n) %>%
+      pivot_wider(names_from = albuminuria, values_from = n, values_fill = 0) %>%
+      print()
+  }
+}
+```
+
+## 6. Staging Summary Function
+A single function summarises stage, KDIGO risk, and the GFR x ACR matrix for
+any snapshot table (baseline or 10-year).
+```{r}
+#' Summarise staging from a snapshot table (e.g. dt_baseline, dt_10y)
+#'
+#' @param dt_snapshot Data.table with columns (eid, stage, albuminuria, kdigo_risk)
+#' @param eids_elig Character vector of eligible eids
+#' @param label Label for printing
+summarise_staging <- function(dt_snapshot, eids_elig, label) {
+  n_elig <- length(eids_elig)
+  pctf <- function(n) sprintf("%s (%.1f%%)", format(n, big.mark = ","), 100 * n / n_elig)
+
+  dt_sub <- dt_snapshot %>% filter(eid %in% eids_elig)
+
+  stage_summary <- dt_sub %>%
+    filter(!is.na(stage)) %>%
+    count(stage) %>%
+    mutate(formatted = pctf(n))
+
+  risk_summary <- dt_sub %>%
+    filter(kdigo_risk != "Unclassified") %>%
+    count(kdigo_risk) %>%
+    mutate(formatted = pctf(n))
+
+  kdigo_matrix <- dt_sub %>%
+    filter(!is.na(stage) & !is.na(albuminuria)) %>%
+    count(stage, albuminuria) %>%
+    mutate(formatted = pctf(n)) %>%
+    arrange(
+      factor(stage, levels = c("G1", "G2", "G3", "G3a", "G3b", "G4", "G5")),
+      albuminuria
+    )
+
+  n_staged <- nrow(dt_sub %>% filter(!is.na(stage) | !is.na(albuminuria)))
+  n_unstaged <- n_elig - n_staged
+
+  cat(sprintf("\n=== %s: GFR Stage ===\n", label))
+  print(stage_summary)
+  cat(sprintf("\n=== %s: KDIGO Risk ===\n", label))
+  print(risk_summary)
+  cat(sprintf("\n=== %s: KDIGO GFR x ACR Matrix ===\n", label))
+  kdigo_matrix %>%
+    select(stage, albuminuria, n) %>%
+    pivot_wider(names_from = albuminuria, values_from = n, values_fill = 0) %>%
+    print()
+  cat(sprintf("\nStaged:   %s\n", pctf(n_staged)))
+  cat(sprintf("Unstaged: %s\n", pctf(n_unstaged)))
+}
+```
+
+## 7. Full Cohort Flowchart: Baseline Staging
+```{r}
+cat("\n=== Algorithm Flowchart: Full Cohort ===\n")
+
+dt_timeline_baseline <- dt_timeline %>%
+  lazy_dt() %>%
+  inner_join(
+    dt_visits %>% filter(visit_index == 0) %>% select(eid, cutoff = assessment_date),
+    by = "eid"
+  ) %>%
+  filter(eid %in% eids_eligible & date <= cutoff) %>%
+  select(-cutoff) %>%
+  as.data.table()
+
+
+flowchart_full <- compute_flowchart(eids_eligible, dt_timeline_baseline)
+print_flowchart(flowchart_full)
+```
+
+## 8. GP-Linked Sub-Cohort
+```{r}
+eids_gp <- dt_cohort %>%
+  filter(has_gp) %>%
+  pull(eid)
+eids_eligible_gp <- intersect(eids_eligible, eids_gp)
+n_eligible_gp <- length(eids_eligible_gp)
+
+cat(sprintf(
+  "\nGP-linked eligible: %s (%.1f%% of all eligible)\n",
+  format(n_eligible_gp, big.mark = ","),
+  100 * n_eligible_gp / n_eligible
+))
+```
+
+### 8.1 GP-Linked: Baseline Staging
+```{r}
+summarise_staging(dt_baseline, eids_eligible_gp, "GP-Linked Baseline")
+```
+
+### 8.2 GP-Linked: 10-Year Staging
+```{r}
+summarise_staging(dt_10y, eids_eligible_gp, "GP-Linked 10-Year")
+```
+
+### 8.3 GP-Linked: Baseline Flowchart
+```{r}
+dt_tl_gp_baseline <- dt_timeline %>%
+  lazy_dt() %>%
+  inner_join(
+    dt_visits %>% filter(visit_index == 0) %>% select(eid, cutoff = assessment_date),
+    by = "eid"
+  ) %>%
+  filter(eid %in% eids_eligible_gp & date <= cutoff) %>%
+  select(-cutoff) %>%
+  as.data.table()
+
+cat("\n=== Algorithm Flowchart: GP-Linked Baseline ===\n")
+flowchart_gp_baseline <- compute_flowchart(eids_eligible_gp, dt_tl_gp_baseline)
+print_flowchart(flowchart_gp_baseline)
+```
+
+### 8.4 GP-Linked: 10 Years Post-Baseline Flowchart
+```{r}
+dt_tl_gp_10y <- dt_timeline %>%
+  lazy_dt() %>%
+  inner_join(
+    dt_visits %>% filter(visit_index == 0) %>%
+      mutate(cutoff = assessment_date + 365.25 * 10) %>%
+      select(eid, cutoff),
+    by = "eid"
+  ) %>%
+  filter(eid %in% eids_eligible_gp & date <= cutoff) %>%
+  select(-cutoff) %>%
+  as.data.table()
+
+cat("\n=== Algorithm Flowchart: GP-Linked 10-Year ===\n")
+flowchart_gp_10y <- compute_flowchart(eids_eligible_gp, dt_tl_gp_10y)
+print_flowchart(flowchart_gp_10y)
+```
+
+## 9. Save
+```{r}
+out_file <- "data/outputs/S01-results-flowchart.rds"
+dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
+saveRDS(
+  list(
+    full_cohort = list(
+      n_total = n_total,
+      n_gp = n_gp,
+      n_eligible = n_eligible,
+      n_coded = n_coded,
+      n_egfr_pair = n_egfr_pair
+    ),
+    full_flowchart = flowchart_full,
+    gp_baseline = flowchart_gp_baseline,
+    gp_10y = flowchart_gp_10y
+  ),
+  out_file
+)
+upload_to_dx(out_file, "kdsc_staging/outputs/S01-results-flowchart.rds")
+```

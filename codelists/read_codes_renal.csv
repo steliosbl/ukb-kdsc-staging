@@ -1,0 +1,63 @@
+read_code,version,term_description,type,include
+44J7.,v2,Albumin / creatinine ratio,acr,1
+46TC.,v2,Urine albumin:creatinine ratio,acr,1
+46TD.,v2,Urine microalbumin:creatinine ratio,acr,1
+X773Y,v3,Albumin/creatinine ratio,acr,1
+XE2n3,v3,Urine albumin/creatinine ratio,acr,1
+XE2n4,v3,Urine microalbumin/creatinine ratio,acr,1
+.44J7,v3,Albumin/creatinine ratio,acr,1
+.46TC,v3,Urine albumin:creatinine ratio (& level),acr,1
+.46TD,v3,Urine microalbumin:creatinine ratio (& level),acr,1
+46N8.,v2,Urine microalbumin profile,acr,1
+XaJmI,v3,Urine microalbumin profile,acr,1
+.46N8,v3,Urine microalbumin profile,acr,1
+44J3.,v2,Serum creatinine,creat,1
+44JC.,v2,Corrected plasma creatinine level,creat,1
+44JD.,v2,Corrected serum creatinine level,creat,1
+44JF.,v2,Plasma creatinine level,creat,1
+4Q40.,v2,Creatinine level,creat,1
+X771Q,v3,Creatinine level,creat,1
+X804C,v3,micromole/mole creatinine,creat,1
+X80D7,v3,Creatinine,creat,1
+XE2q5,v3,Serum creatinine level,creat,1
+Xa23C,v3,Unit of creatinine analysis,creat,1
+XaERX,v3,Corrected plasma creatinine level,creat,1
+XaERc,v3,Corrected serum creatinine level,creat,1
+XaETQ,v3,Plasma creatinine level,creat,1
+.44J3,v3,Serum creatinine (& level),creat,1
+.44JC,v3,Corrected plasma creatinine level,creat,1
+.44JD,v3,Corrected serum creatinine level,creat,1
+.44JF,v3,Plasma creatinine level,creat,1
+.4Q40,v3,Creatinine level,creat,1
+44ZX.,v2,Blood cystatin C level,cyst,1
+44ZX0,v2,Serum cystatin C level,cyst,1
+XaJjz,v3,Blood cystatin C level,cyst,1
+XabBD,v3,Serum cystatin C level,cyst,1
+.44ZX,v3,Blood cystatin C level,cyst,1
+451E.,v2,Glomerular filtration rate calculated by abbreviated Modification of Diet in Renal Disease Study Group calculation,egfr,1
+451F.,v2,Glomerular filtration rate,egfr,1
+451G.,v2,Glomerular filtration rate calculated by abbreviated Modification of Diet in Renal Disease Study Group calculation adjusted for African American origin,egfr,1
+451K.,v2,Estimated glomerular filtration rate using Chronic Kidney Disease Epidemiology Collaboration formula per 1.73 square metres,egfr,1
+451M.,v2,Estimated glomerular filtration rate using cystatin C Chronic Kidney Disease Epidemiology Collaboration equation per 1.73 square metres,egfr,1
+451N.,v2,Estimated glomerular filtration rate using creatinine Chronic Kidney Disease Epidemiology Collaboration equation per 1.73 square metres,egfr,1
+XSFyN,v3,Glomerular filtration rate,egfr,1
+XaK8y,v3,Glomerular filtration rate calculated by abbreviated Modification of Diet in Renal Disease Study Group calculation,egfr,1
+XaLtc,v3,Glomerular filtration rate testing,egfr,1
+XaMDA,v3,Glomerular filtration rate calculated by abbreviated Modification of Diet in Renal Disease Study Group calculation adjusted for African American origin,egfr,1
+XaX4B,v3,Tubular maximal reabsorption of phosphate/glomerular filtration rate calculation,egfr,1
+XaZpN,v3,Estimated glomerular filtration rate using Chronic Kidney Disease Epidemiology Collaboration formula per 1.73 square metres,egfr,1
+XacUJ,v3,Estimated glomerular filtration rate using cystatin C Chronic Kidney Disease Epidemiology Collaboration equation per 1.73 square metres,egfr,1
+XacUK,v3,Estimated glomerular filtration rate using creatinine Chronic Kidney Disease Epidemiology Collaboration equation per 1.73 square metres,egfr,1
+.451E,v3,Glomerular filtration rate calculated by abbreviated Modification of Diet in Renal Disease Study Group calculation,egfr,1
+.451F,v3,Glomerular filtration rate,egfr,1
+.451G,v3,Glomerular filtration rate calculated by abbreviated Modification of Diet in Renal Disease Study Group calculation adjusted for African American origin,egfr,1
+7P140,v3,Glomerular filtration rate testing,egfr,1
+46N4.,v2,Urine albumin,uriamac,1
+46W..,v2,Urine microalbumin,uriamac,1
+XE2bw,v3,Urine microalbumin level,uriamac,1
+XE2eI,v3,Urine albumin level,uriamac,1
+.46N4,v3,Urine albumin,uriamac,1
+.46W.,v3,Urine microalbumin (& level),uriamac,1
+46M7.,v2,Urine creatinine,uriacc,1
+XE2qO,v3,Urine creatinine level,uriacc,1
+.46M7,v3,Urine creatinine (& level),uriacc,1

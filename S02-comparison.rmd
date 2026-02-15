@@ -1,0 +1,287 @@
+---
+title: "UKB KDSC vs Lees et al. (2019) Comparison"
+format: html
+---
+
+# Study 2: Comparison with Lees et al. (2019)
+We compare our KDIGO CKD staging against published numbers from:
+
+> Lees JS, Welsh CE, Celis-Morales CA, et al. Glomerular filtration rate by
+> differing measures, albuminuria and prediction of cardiovascular disease,
+> mortality and end-stage kidney disease. *Nature Medicine* 2019;25:1753-1760.
+> Correction: *Nature Medicine* 2020;26:1308.
+
+Key methodological differences (see `lees_et_al_ckd_classification_comparison.md`):
+ 1. Lees uses a single baseline measurement; we use longitudinal EHR data
+ 2. Lees derives GFR stage purely from biomarkers; we additionally use ICD-10/OPCS-4 codes
+ 3. Lees excludes eGFR <15 and prevalent ESKD; we classify these as G5
+ 4. Lees uses eGFRcr-cys (creatinine-cystatin C); we use eGFRcr from GP records
+ 5. Lees uses a single spot urine ACR; we use longitudinal ACR from GP + UKB
+ 6. Lees excludes prior CVD (~30k participants); we do not
+
+## 0. Setup
+```{r}
+source(knitr::purl("R00-parameters.rmd", quiet = TRUE, output = tempfile()))
+
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+library(arrow)
+```
+
+## 1. Load Our Data
+```{r}
+dt_baseline <- read_parquet("data/ckd_baseline.parquet") %>% as.data.table()
+dt_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
+dt_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
+dt_timeline <- read_parquet("data/ckd_timeline.parquet") %>% as.data.table()
+```
+
+## 2. Published Numbers (Lees et al.)
+From Supplementary Table 2 (corrected, eGFRcr-cys x uACR grid).
+
+Study population: 440,526 after excluding 31,283 missing biochemistry, 260
+prevalent ESKD, 38 eGFR <15, and 30,112 prior CVD.
+```{r}
+lees_cohort_n <- 440526L
+
+# eGFR categories (eGFRcr-cys)
+lees_egfr <- tibble(
+  stage = c("G1", "G2", "G3a", "G3b", "G4"),
+  n = c(237535L, 193945L, 7528L, 1231L, 286L)
+) %>% mutate(pct = 100 * n / lees_cohort_n)
+
+# uACR categories (corrected)
+lees_acr <- tibble(
+  albuminuria = c("A1", "A2", "A3"),
+  n = c(407153L, 19403L, 1653L)
+)
+lees_acr_total <- sum(lees_acr$n) # 428,209 with ACR data
+lees_acr <- lees_acr %>% mutate(pct = 100 * n / lees_acr_total)
+
+# Joint eGFRcr-cys x uACR grid (5x3 KDIGO matrix)
+lees_grid <- tribble(
+  ~stage, ~A1,     ~A2,   ~A3,
+  "G1",   221418L, 9292L, 520L,
+  "G2",   178761L, 8824L, 687L,
+  "G3a",  6149L,   886L,  227L,
+  "G3b",  734L,    314L,  127L,
+  "G4",   91L,     87L,   92L
+) %>%
+  pivot_longer(cols = c(A1, A2, A3), names_to = "albuminuria", values_to = "n_lees")
+
+lees_grid_total <- sum(lees_grid$n_lees) # 428,209
+```
+
+## 3. Our Baseline Numbers
+We compute the same grid from our baseline staging. Our cohort differs:
+ - We include the full UKB (~502k, minus withdrawals)
+ - We do not exclude prior CVD or prevalent ESKD
+ - We use longitudinal EHR + coded CKD, not just single-visit biomarkers
+```{r}
+our_cohort_n <- nrow(dt_cohort)
+
+# Baseline staging distribution (all participants with CKD staging)
+our_egfr <- dt_baseline %>%
+  filter(!is.na(stage)) %>%
+  count(stage, name = "n") %>%
+  mutate(pct = 100 * n / our_cohort_n)
+
+our_acr <- dt_baseline %>%
+  filter(!is.na(albuminuria)) %>%
+  count(albuminuria, name = "n") %>%
+  mutate(pct = 100 * n / our_cohort_n)
+
+our_grid <- dt_baseline %>%
+  filter(!is.na(stage) & !is.na(albuminuria)) %>%
+  count(stage, albuminuria, name = "n_ours")
+
+# KDIGO risk distribution
+our_risk <- dt_baseline %>%
+  filter(kdigo_risk != "Unclassified") %>%
+  count(kdigo_risk, name = "n") %>%
+  mutate(pct = 100 * n / our_cohort_n)
+```
+
+## 4. Comparison: eGFR Categories
+```{r}
+cmp_egfr <- lees_egfr %>%
+  rename(n_lees = n, pct_lees = pct) %>%
+  left_join(
+    our_egfr %>% rename(n_ours = n, pct_ours = pct),
+    by = "stage"
+  ) %>%
+  mutate(
+    n_ours = coalesce(n_ours, 0L),
+    pct_ours = coalesce(pct_ours, 0),
+    ratio = n_ours / n_lees
+  )
+
+cat("=== eGFR Category Comparison ===\n")
+cat(sprintf("Lees cohort: %d | Our cohort: %d\n\n", lees_cohort_n, our_cohort_n))
+cmp_egfr %>% print(n = Inf)
+
+cat("\nContext:\n")
+cat("- Lees uses single-visit eGFRcr-cys; we use longitudinal eGFRcr from GP + UKB\n")
+cat("- Lees assigns ALL participants to a GFR category; we only assign those with CKD evidence\n")
+cat("- Our G1/G2 counts will be much lower (we only capture those with coded CKD or abnormal ACR)\n")
+cat("- Our G3-G5 should be comparable or higher (longitudinal data captures more)\n")
+cat("- Lees excludes G5 entirely; we include it\n")
+```
+
+## 5. Comparison: ACR Categories
+```{r}
+cmp_acr <- lees_acr %>%
+  rename(n_lees = n, pct_lees = pct) %>%
+  left_join(
+    our_acr %>% rename(n_ours = n, pct_ours = pct),
+    by = "albuminuria"
+  ) %>%
+  mutate(
+    n_ours = coalesce(n_ours, 0L),
+    pct_ours = coalesce(pct_ours, 0),
+    ratio = n_ours / n_lees
+  )
+
+cat("=== ACR Category Comparison ===\n")
+cat(sprintf("Lees ACR total: %d | Our ACR total: %d\n\n", lees_acr_total, sum(our_acr$n)))
+cmp_acr %>% print(n = Inf)
+
+cat("\nContext:\n")
+cat("- Lees has ACR for ~97% of cohort (single spot urine at assessment visit)\n")
+cat("- Our ACR comes from UKB baseline + GP longitudinal records\n")
+cat("- ~2.8% of Lees cohort missing ACR vs potentially more in ours (GP ACR variable)\n")
+cat("- Lees uses mg/mmol thresholds (3, 30); our pipeline uses mg/g (30, 300)\n")
+```
+
+## 6. Comparison: Joint KDIGO Grid
+```{r}
+cmp_grid <- lees_grid %>%
+  left_join(our_grid, by = c("stage", "albuminuria")) %>%
+  mutate(
+    n_ours = coalesce(n_ours, 0L),
+    pct_lees = 100 * n_lees / lees_grid_total,
+    pct_ours = 100 * n_ours / sum(our_grid$n_ours),
+    ratio = if_else(n_lees > 0, n_ours / n_lees, NA_real_)
+  ) %>%
+  mutate(
+    stage = factor(stage, levels = c("G1", "G2", "G3a", "G3b", "G4", "G5")),
+    albuminuria = factor(albuminuria, levels = c("A1", "A2", "A3"))
+  ) %>%
+  arrange(stage, albuminuria)
+
+cat("=== Joint KDIGO Grid Comparison ===\n\n")
+cmp_grid %>%
+  select(stage, albuminuria, n_lees, pct_lees, n_ours, pct_ours, ratio) %>%
+  print(n = Inf)
+
+cat("\nContext:\n")
+cat("- Lees grid covers 428,209 participants (eGFR + ACR available)\n")
+cat(sprintf("- Our grid covers %d participants (both stage and albuminuria assigned)\n", sum(our_grid$n_ours)))
+cat("- G1/G2 x A1 will be dramatically lower in ours (most are healthy, not CKD)\n")
+cat("- G3+ categories should be more comparable\n")
+```
+
+## 7. Comparison: CKD Prevalence (G3+)
+The most directly comparable metric: prevalence of eGFR <60 (G3a+).
+```{r}
+lees_g3plus <- lees_egfr %>%
+  filter(stage %in% c("G3a", "G3b", "G4")) %>%
+  pull(n) %>%
+  sum()
+lees_g3plus_pct <- 100 * lees_g3plus / lees_cohort_n
+
+our_g3plus <- dt_baseline %>%
+  filter(stage %in% c("G3a", "G3b", "G4", "G5")) %>%
+  nrow()
+our_g3plus_pct <- 100 * our_g3plus / our_cohort_n
+
+cat("=== CKD Prevalence at Baseline (G3+) ===\n\n")
+cat(sprintf(
+  "Lees (G3a-G4, excludes G5): %d (%.2f%% of %d)\n",
+  lees_g3plus, lees_g3plus_pct, lees_cohort_n
+))
+cat(sprintf(
+  "Ours (G3a-G5, includes G5): %d (%.2f%% of %d)\n",
+  our_g3plus, our_g3plus_pct, our_cohort_n
+))
+cat(sprintf("Ratio (ours / Lees): %.2f\n\n", our_g3plus / lees_g3plus))
+
+cat("Context:\n")
+cat("- Lees reports ~2.0% with eGFR <60 (G3a+G3b+G4) from single-visit eGFRcr-cys\n")
+cat("- Our prevalence captures coded CKD + longitudinal eGFR, should be higher\n")
+cat("- Lees excludes G5 (ESKD) and prior CVD; we include both\n")
+```
+
+## 8. Comparison: Albuminuria Prevalence
+```{r}
+lees_a2plus <- lees_acr %>%
+  filter(albuminuria %in% c("A2", "A3")) %>%
+  pull(n) %>%
+  sum()
+lees_a2plus_pct <- 100 * lees_a2plus / lees_acr_total
+
+our_a2plus <- our_acr %>%
+  filter(albuminuria %in% c("A2", "A3")) %>%
+  pull(n) %>%
+  sum()
+our_acr_total <- sum(our_acr$n)
+our_a2plus_pct <- 100 * our_a2plus / our_acr_total
+
+cat("=== Albuminuria Prevalence (A2+) ===\n\n")
+cat(sprintf(
+  "Lees (A2+A3): %d (%.2f%% of %d with ACR)\n",
+  lees_a2plus, lees_a2plus_pct, lees_acr_total
+))
+cat(sprintf(
+  "Ours (A2+A3): %d (%.2f%% of %d with ACR)\n",
+  our_a2plus, our_a2plus_pct, our_acr_total
+))
+cat(sprintf("Ratio (ours / Lees): %.2f\n\n", our_a2plus / lees_a2plus))
+
+cat("Context:\n")
+cat("- Lees: 4.9% with A2+ from single random spot urine\n")
+cat("- Corrected from original paper (which had 3.2% A3 due to unit error)\n")
+cat("- Our ACR from longitudinal GP records may capture more/fewer depending on testing patterns\n")
+```
+
+## 9. Summary Table
+```{r}
+summary_table <- tribble(
+  ~metric, ~lees_value, ~our_value, ~note,
+  "Total cohort", lees_cohort_n, our_cohort_n,
+  "Lees excludes missing biochem, ESKD, eGFR<15, prior CVD",
+  "G3a+", lees_g3plus, our_g3plus,
+  "Lees: G3a-G4 only; Ours: G3a-G5",
+  "A2+ (among those with ACR)", lees_a2plus, our_a2plus,
+  "Lees: single spot urine; Ours: longitudinal",
+  "On KDIGO grid (both eGFR+ACR)", lees_grid_total, sum(our_grid$n_ours),
+  "Lees: ~97% of cohort; Ours: only CKD cases with both"
+) %>%
+  mutate(
+    ratio = our_value / lees_value,
+    pct_lees = sprintf("%.2f%%", 100 * lees_value / lees_cohort_n),
+    pct_ours = sprintf("%.2f%%", 100 * our_value / our_cohort_n)
+  )
+
+cat("=== Summary ===\n\n")
+summary_table %>% print(n = Inf, width = Inf)
+```
+
+## 10. Save
+```{r}
+out_file <- "data/comparison_lees_et_al.rds"
+dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
+saveRDS(
+  list(
+    cmp_egfr = cmp_egfr,
+    cmp_acr = cmp_acr,
+    cmp_grid = cmp_grid,
+    summary = summary_table,
+    lees_cohort_n = lees_cohort_n,
+    our_cohort_n = our_cohort_n
+  ),
+  out_file
+)
+upload_to_dx(out_file, "kdsc_staging/comparison_lees_et_al.rds")
+```

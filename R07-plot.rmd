@@ -1,0 +1,183 @@
+---
+title: "UKB KDSC CKD Staging Plots"
+format: html
+---
+
+# 7. KDIGO CKD Staging Visualisation
+Generate KDIGO heatmaps and Sankey diagrams from the CKD staging output.
+
+## 0. Setup
+```{r}
+source(knitr::purl("R00-parameters.rmd", quiet = TRUE, output = tempfile()))
+
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+library(arrow)
+```
+
+## 1. Load Data
+```{r}
+dt_timeline <- read_parquet("data/ckd_timeline.parquet") %>% as.data.table()
+dt_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
+dt_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
+
+# Load baseline and 10y data
+dt_baseline_all <- read_parquet("data/ckd_baseline.parquet") %>% as.data.table()
+dt_10y <- read_parquet("data/ckd_10y.parquet") %>% as.data.table()
+
+# Filter to GP-linked participants for transition analysis
+dt_baseline <- dt_baseline_all %>%
+  lazy_dt() %>%
+  inner_join(dt_cohort %>% lazy_dt() %>% filter(has_gp) %>% select(eid), by = "eid") %>%
+  as.data.table()
+```
+
+## 2. KDIGO Heatmaps
+The KDIGO heatmap shows the distribution of CKD stages (G1-G5) by albuminuria
+category (A1-A3). Cells are coloured by KDIGO risk: green (low), yellow
+(moderate), orange (high), red (very high).
+
+### 2.1 Baseline Heatmap
+```{r fig.width=11.7, fig.height=8.3}
+source("lib/plot_kdigo_grid.R")
+
+baseline_plot <- plot_kdigo_heatmap(dt_baseline_all, "KDIGO Risk Classification at Baseline")
+print(baseline_plot)
+
+out_file <- "data/outputs/R07-kdigo_baseline.pdf"
+dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
+pdf(out_file, width = 297 / 25.4, height = 210 / 25.4)
+print(baseline_plot)
+dev.off()
+upload_to_dx(out_file, "kdsc_staging/outputs/R07-kdigo_baseline.pdf")
+```
+
+### 2.2 10-Year Heatmap (GP-linked)
+```{r fig.width=11.7, fig.height=8.3}
+tenyear_plot <- plot_kdigo_heatmap(dt_10y, "KDIGO Risk Classification at 10 Years Post-Baseline (GP-linked only)")
+print(tenyear_plot)
+
+out_file <- "data/outputs/R07-kdigo_10y.pdf"
+pdf(out_file, width = 297 / 25.4, height = 210 / 25.4)
+print(tenyear_plot)
+dev.off()
+upload_to_dx(out_file, "kdsc_staging/outputs/R07-kdigo_10y.pdf")
+```
+
+## 3. Sankey Diagrams: Stage Transitions (Baseline → 10y)
+Track how CKD stages evolve from baseline to 10 years post-baseline among
+GP-linked participants.
+
+### 3.1 GFR Stage Transitions
+```{r}
+source("lib/plot_sankey.R")
+
+sankey_stage <- plot_sankey_transitions(
+  dt_baseline, dt_10y,
+  column = "stage",
+  start_label = "Baseline",
+  end_label = "10y"
+)
+
+out_file <- "data/outputs/R07-sankey_stage.html"
+dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
+save_sankey_html(sankey_stage, out_file)
+# upload_to_dx(out_file, "kdsc_staging/outputs/R07-sankey_stage.html")
+
+sankey_stage
+```
+
+### 3.2 KDIGO Stage Transitions
+```{r}
+sankey_kdigo <- plot_sankey_transitions(
+  dt_baseline, dt_10y,
+  column = "kdigo",
+  start_label = "Baseline",
+  end_label = "10y"
+)
+
+out_file <- "data/outputs/R07-sankey_kdigo.html"
+save_sankey_html(sankey_kdigo, out_file)
+# upload_to_dx(out_file, "kdsc_staging/outputs/R07-sankey_kdigo.html")
+
+sankey_kdigo
+```
+
+### 3.3 KDIGO Risk Transitions
+```{r}
+sankey_risk <- plot_sankey_transitions(
+  dt_baseline, dt_10y,
+  column = "kdigo_risk",
+  start_label = "Baseline",
+  end_label = "10y"
+)
+
+out_file <- "data/outputs/R07-sankey_risk.html"
+save_sankey_html(sankey_risk, out_file)
+# upload_to_dx(out_file, "kdsc_staging/outputs/R07-sankey_risk.html")
+
+sankey_risk
+```
+
+## 4. KDIGO Risk Distribution
+```{r fig.width=8, fig.height=4}
+kdigo_risk_colours <- c(
+  "Low" = "#4CAF50",
+  "Moderate" = "#FFC107",
+  "High" = "#FF9800",
+  "Very High" = "#F44336"
+)
+risk_levels <- c("Low", "Moderate", "High", "Very High")
+
+risk_data <- dt_baseline %>%
+  filter(kdigo_risk %in% risk_levels) %>%
+  mutate(kdigo_risk = factor(kdigo_risk, levels = risk_levels)) %>%
+  count(kdigo_risk)
+
+ggplot(risk_data, aes(x = kdigo_risk, y = n, fill = kdigo_risk)) +
+  geom_col() +
+  scale_fill_manual(values = kdigo_risk_colours) +
+  labs(
+    title = "KDIGO Risk Distribution at Baseline",
+    x = "KDIGO Risk Category",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## 5. Stage Distribution Over Time
+```{r fig.width=10, fig.height=5}
+gfr_levels <- c("G1", "G2", "G3a", "G3b", "G4", "G5")
+
+# Bin timeline dates into years relative to baseline
+dt_by_year <- dt_timeline %>%
+  lazy_dt() %>%
+  left_join(
+    dt_visits %>% lazy_dt() %>% filter(visit_index == 0) %>% select(eid, assessment_date),
+    by = "eid"
+  ) %>%
+  filter(!is.na(stage)) %>%
+  mutate(years_from_baseline = as.numeric(date - assessment_date) / 365.25) %>%
+  mutate(year_bin = floor(years_from_baseline)) %>%
+  filter(year_bin >= -5, year_bin <= 15) %>%
+  as.data.table()
+
+stage_by_year <- dt_by_year %>%
+  group_by(eid, year_bin) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  count(year_bin, stage) %>%
+  mutate(stage = factor(stage, levels = gfr_levels))
+
+ggplot(stage_by_year, aes(x = year_bin, y = n, fill = stage)) +
+  geom_area(position = "stack") +
+  scale_fill_brewer(palette = "RdYlGn", direction = -1, name = "GFR Stage") +
+  labs(
+    title = "CKD Stage Distribution Over Time",
+    x = "Years from Baseline",
+    y = "Number of Participants"
+  ) +
+  theme_minimal()
+```

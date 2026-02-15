@@ -1,0 +1,31 @@
+---
+title: "UKB KDSC Staging Parameters"
+format: html
+---
+
+# UKB KDIGO-based CKD Staging Pipeline
+This notebook defines shared parameters and helper functions for the CKD staging
+pipeline. All subsequent notebooks source this file at the start.
+
+## 0. Setup
+```{r}
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+library(arrow)
+
+options(max.print = 1000)
+```
+
+## 1. Parameters
+```{r}
+Project <- lst(
+  name = "ukb-kdsc-staging",
+  data_dir = file.path("data")
+)
+```
+
+## 2. DNAnexus Helper Functions
+```{r}
+source("lib/dx_utils.R")
+```

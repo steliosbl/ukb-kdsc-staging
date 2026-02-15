@@ -1,0 +1,373 @@
+---
+title: "UKB KDSC CKD Staging Algorithm"
+format: html
+---
+
+# 6. CKD Staging Algorithm (KDIGO)
+We categorise CKD cases into KDIGO stages based on:
+ - Matched CKD events from hospital records, operations, GP, and self-report (R05)
+ - eGFR and ACR biomarker measurements (R03, R04)
+
+This reproduces the logic from R03a-ckd.rmd in the parent repo.
+
+## 0. Setup
+```{r}
+source(knitr::purl("R00-parameters.rmd", quiet = TRUE, output = tempfile()))
+
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+library(arrow)
+```
+
+## 1. Data Sources
+```{r}
+dt_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
+dt_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
+
+# Biomarkers (eGFR and ACR from UKB + GP)
+dt_biomarkers_ukb <- read_parquet("data/biomarkers_ukb.parquet") %>% as.data.table()
+dt_biomarkers_gp <- read_parquet("data/biomarkers_gp.parquet") %>% as.data.table()
+dt_biomarkers <- rbind(dt_biomarkers_ukb, dt_biomarkers_gp, fill = TRUE)
+
+# Matched CKD events (from R05-hospital.rmd)
+dt_matched <- read_parquet("data/ckd_matched_events.parquet") %>% as.data.table()
+
+cat(sprintf("Matched CKD events: %d\n", nrow(dt_matched)))
+cat(sprintf("Biomarker measurements: %d\n", nrow(dt_biomarkers)))
+```
+
+## 2. CKD Stage Code Mapping
+```{r}
+ckd_stage_codes <- list(
+  stage_1 = "N181",
+  stage_2 = "N182",
+  stage_3 = "N183",
+  stage_4 = "N184",
+  stage_5 = "N185",
+  esrd = "N186",
+  nos = "N189"
+)
+```
+
+## 3. eGFR and ACR Categorisation
+```{r}
+dt_egfr_acr <- dt_biomarkers %>%
+  lazy_dt() %>%
+  filter(type %in% c("egfr", "acr")) %>%
+  mutate(event = case_when(
+    type == "egfr" & value >= 90 ~ "egfr_g1",
+    type == "egfr" & value >= 60 & value < 90 ~ "egfr_g2",
+    type == "egfr" & value >= 45 & value < 60 ~ "egfr_g3a",
+    type == "egfr" & value >= 30 & value < 45 ~ "egfr_g3b",
+    type == "egfr" & value >= 15 & value < 30 ~ "egfr_g4",
+    type == "egfr" & value < 15 ~ "egfr_g5",
+    type == "acr" & value < 30 ~ "acr_a1",
+    type == "acr" & value >= 30 & value < 300 ~ "acr_a2",
+    type == "acr" & value >= 300 ~ "acr_a3",
+    TRUE ~ NA_character_
+  )) %>%
+  as.data.table()
+
+cat(sprintf("eGFR measurements: %d\n", dt_egfr_acr[type == "egfr", .N]))
+cat(sprintf("ACR measurements: %d\n", dt_egfr_acr[type == "acr", .N]))
+```
+
+## 4. Merge
+```{r}
+dt_matched_events <- dt_matched %>%
+  mutate(event = case_when(
+    code %in% ckd_stage_codes$stage_1 ~ "stage_1",
+    code %in% ckd_stage_codes$stage_2 ~ "stage_2",
+    code %in% ckd_stage_codes$stage_3 ~ "stage_3",
+    code %in% ckd_stage_codes$stage_4 ~ "stage_4",
+    code %in% ckd_stage_codes$stage_5 ~ "stage_5",
+    code %in% ckd_stage_codes$esrd ~ "stage_5",
+    code %in% ckd_stage_codes$nos ~ "ckd_nos",
+    TRUE ~ name
+  ))
+
+dt_flags <- bind_rows(
+  dt_matched_events %>%
+    select(eid, date, event, source),
+  dt_egfr_acr %>%
+    select(eid, date, event, source)
+) %>%
+  pivot_wider(
+    id_cols = c(eid, date, source),
+    names_from = event,
+    values_from = event,
+    values_fn = ~TRUE,
+    values_fill = FALSE
+  ) %>%
+  group_by(eid) %>%
+  arrange(date) %>%
+  mutate(across(
+    .cols = where(is.logical),
+    .fns = ~ cumsum(.) > 0
+  )) %>%
+  group_by(eid, date) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  as.data.table()
+
+# Ensure all expected columns exist
+expected_cols <- c(
+  "stage_1", "stage_2", "stage_3", "stage_4", "stage_5",
+  "ckd_nos", "coded_ckd", "dialysis", "transplant", "congenital",
+  "kidney_failure",
+  "egfr_g1", "egfr_g2", "egfr_g3a", "egfr_g3b", "egfr_g4", "egfr_g5",
+  "acr_a1", "acr_a2", "acr_a3"
+)
+for (col in expected_cols) {
+  if (!col %in% names(dt_flags)) dt_flags[, (col) := FALSE]
+}
+```
+
+## 5. Staging 
+### 5.1 Eligible Sub-Cohort 
+We restrict to participants with 
+a. Any CKD code, or 
+b. Two consecutive eGFR <= 90 at least 90 days apart 
+```{r}
+dt_eligible_egfr <- dt_egfr_acr %>%
+  lazy_dt() %>%
+  filter(type == "egfr" & value <= 90) %>%
+  arrange(eid, date) %>%
+  group_by(eid) %>%
+  mutate(
+    date_diff = as.numeric(difftime(date, lag(date), units = "days"))
+  ) %>%
+  filter(date_diff >= 90) %>%
+  summarise(n_pairs_90days_apart = n()) %>%
+  filter(n_pairs_90days_apart >= 1) %>%
+  as.data.table()
+
+dt_eligible <- dt_flags %>%
+  lazy_dt() %>%
+  semi_join(bind_rows(
+    dt_matched_events %>% select(eid) %>% distinct(),
+    dt_eligible_egfr %>% select(eid) %>% distinct()
+  ), by = "eid") %>%
+  as.data.table()
+
+n_eligible <- dt_eligible %>%
+  distinct(eid) %>%
+  nrow()
+cat("Starting cohort: ", nrow(dt_cohort), "\n")
+cat("Eligible participants with CKD code or 2 eGFR <= 90 at least 90 days apart: ", n_eligible, "=", 100 * n_eligible / nrow(dt_cohort), "% of cohort\n")
+```
+
+### 5.2 Algorithm Logic 
+1. We assign GFR stage based on the most severe code or eGFR measurement observed 
+   up to each date. 
+  - If there's a code for CKD stage 3 but no eGFR measurement, we assign G3 (no sub-stage).
+2. We assign albuminuria stage based on the most severe ACR measurement observed up to
+   each date.
+3. Cases with only codes for congenital, CKD NOS, dialysis, or transplant but no 
+   stage codes or eGFR/ACR are assigned "CKD Unclassified". 
+
+```{r}
+dt_pheno <- dt_eligible %>%
+  lazy_dt() %>%
+  # 1. Assign stage and albuminuria categories
+  mutate(
+    stage = case_when(
+      stage_5 | egfr_g5 ~ "G5",
+      stage_4 | egfr_g4 ~ "G4",
+      egfr_g3b ~ "G3b",
+      egfr_g3a ~ "G3a",
+      stage_3 & !egfr_g3a & !egfr_g3b ~ "G3",
+      stage_2 | egfr_g2 ~ "G2",
+      stage_1 | egfr_g1 ~ "G1",
+      TRUE ~ NA_character_
+    ),
+    albuminuria = case_when(
+      acr_a3 ~ "A3",
+      acr_a2 ~ "A2",
+      acr_a1 ~ "A1",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(
+    kdigo = case_when(
+      !is.na(stage) & !is.na(albuminuria) ~ paste0(stage, albuminuria),
+      !is.na(stage) ~ stage,
+      !is.na(albuminuria) ~ albuminuria,
+      TRUE ~ "Unclassified"
+    )
+  ) %>%
+  mutate(kdigo_risk = case_when(
+    stage == "G5" ~ "Very High",
+    stage == "G4" ~ "Very High",
+    stage == "G3b" & albuminuria %in% c("A2", "A3") ~ "Very High",
+    stage == "G3b" & albuminuria == "A1" ~ "High",
+    stage == "G3b" & is.na(albuminuria) ~ "High",
+    stage %in% c("G3a", "G3") & albuminuria == "A3" ~ "Very High",
+    stage %in% c("G3a", "G3") & albuminuria == "A2" ~ "High",
+    stage %in% c("G3a", "G3") & albuminuria == "A1" ~ "Moderate",
+    stage %in% c("G3a", "G3") & is.na(albuminuria) ~ "Moderate",
+    stage == "G2" & albuminuria == "A3" ~ "High",
+    stage == "G2" & albuminuria == "A2" ~ "Moderate",
+    stage == "G2" & albuminuria == "A1" ~ "Low",
+    stage == "G2" & is.na(albuminuria) ~ "Low",
+    stage == "G1" & albuminuria == "A3" ~ "Moderate",
+    stage == "G1" & albuminuria == "A2" ~ "Low",
+    stage == "G1" & albuminuria == "A1" ~ "Low",
+    stage == "G1" & is.na(albuminuria) ~ "Low",
+    albuminuria == "A3" ~ "High",
+    albuminuria == "A2" ~ "Moderate",
+    albuminuria == "A1" ~ "Low",
+    TRUE ~ "Unclassified"
+  )) %>%
+  as.data.table()
+
+stopifnot("All Unclassified CKD must be due to coded CKD NOS, dialysis, KF, transplant, or congenital" = dt_pheno %>%
+  lazy_dt() %>%
+  filter(kdigo == "Unclassified") %>%
+  filter(!(ckd_nos | dialysis | transplant | congenital | kidney_failure) | (!is.na(stage) | !is.na(albuminuria))) %>%
+  as.data.table() %>%
+  nrow() == 0)
+
+stopifnot("No NA KDIGO stages" = dt_pheno[is.na(kdigo), .N] == 0)
+```
+
+## 6. Review
+### 6.1 Reporting
+We report some interesting numbers.
+```{r}
+n_cohort <- nrow(dt_cohort)
+n_assignments <- nrow(dt_pheno)
+n_kdigo <- dt_pheno %>%
+  filter(!is.na(stage) | !is.na(albuminuria)) %>%
+  distinct(eid) %>%
+  nrow()
+cat(sprintf(
+  "1. Assigned KDIGO stage to %d unique IDs (%.1f%% of cohort) across %d assignments\n",
+  n_kdigo, 100 * n_kdigo / n_cohort, n_assignments
+))
+
+g3_all <- dt_pheno %>%
+  filter(stage %in% c("G3", "G3a", "G3b")) %>%
+  nrow()
+g3_coded <- dt_pheno %>%
+  filter(stage == "G3") %>%
+  nrow()
+g3_coded_eids <- dt_pheno %>%
+  filter(stage == "G3") %>%
+  distinct(eid) %>%
+  nrow()
+g3_all_eids <- dt_pheno %>%
+  filter(stage %in% c("G3", "G3a", "G3b")) %>%
+  distinct(eid) %>%
+  nrow()
+cat(sprintf(
+  "2. Assigned G3 via coded stage 3 (no eGFR sub-stage): %d (%.1f%% of G3x assignments), %d unique IDs (%.1f%% of G3x IDs)\n",
+  g3_coded, 100 * g3_coded / g3_all, g3_coded_eids, 100 * g3_coded_eids / g3_all_eids
+))
+
+coded_only <- dt_pheno %>%
+  filter(
+    (stage_1 | stage_2 | stage_3 | stage_4 | stage_5),
+    !egfr_g1, !egfr_g2, !egfr_g3a, !egfr_g3b, !egfr_g4, !egfr_g5
+  ) %>%
+  nrow()
+coded_only_eids <- dt_pheno %>%
+  filter(
+    (stage_1 | stage_2 | stage_3 | stage_4 | stage_5),
+    !egfr_g1, !egfr_g2, !egfr_g3a, !egfr_g3b, !egfr_g4, !egfr_g5
+  ) %>%
+  distinct(eid) %>%
+  nrow()
+cat(sprintf(
+  "5. Classified via coded stage only (no eGFR): %d assignments, %d unique IDs\n",
+  coded_only, coded_only_eids
+))
+```
+
+### 6.2 Transition Counts
+```{r}
+transition_counts <- dt_pheno %>%
+  group_by(eid) %>%
+  arrange(date) %>%
+  mutate(prev_state = lag(kdigo), state = kdigo) %>%
+  ungroup() %>%
+  filter(!is.na(state)) %>%
+  count(prev_state, state, name = "count") %>%
+  mutate(prev_state = coalesce(prev_state, "")) %>%
+  as_tibble()
+
+transition_matrix <- transition_counts %>%
+  pivot_wider(names_from = state, values_from = count, values_fill = 0)
+
+transition_matrix %>% print()
+```
+
+### 6.3 Baseline
+```{r}
+dt_baseline <- dt_pheno %>%
+  lazy_dt() %>%
+  left_join(
+    dt_visits %>% lazy_dt() %>% filter(visit_index == 0),
+    by = "eid"
+  ) %>%
+  filter(date <= assessment_date) %>%
+  group_by(eid) %>%
+  arrange(date) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  select(eid, baseline_date = date, stage, albuminuria, kdigo, kdigo_risk) %>%
+  as.data.table()
+
+dt_baseline$kdigo %>% table()
+dt_baseline$kdigo_risk %>% table()
+```
+
+### 6.4 10-Year Incidence
+```{r}
+dt_10y <- dt_pheno %>%
+  lazy_dt() %>%
+  inner_join(dt_cohort %>% lazy_dt() %>% select(eid, has_gp) %>% filter(has_gp), by = "eid") %>%
+  left_join(
+    dt_visits %>% lazy_dt() %>% filter(visit_index == 0),
+    by = "eid"
+  ) %>%
+  filter(date <= assessment_date + 365.25 * 10) %>%
+  group_by(eid) %>%
+  arrange(date) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  select(eid, baseline_date = date, stage, albuminuria, kdigo, kdigo_risk) %>%
+  as.data.table()
+
+dt_10y$kdigo %>% table()
+dt_10y$kdigo_risk %>% table()
+```
+
+## 7. Save
+```{r}
+out_file <- "data/ckd_timeline.parquet"
+write_parquet(dt_pheno, out_file)
+upload_to_dx(out_file, "kdsc_staging/ckd_timeline.parquet")
+
+out_file <- "data/ckd_baseline.parquet"
+write_parquet(dt_baseline, out_file)
+upload_to_dx(out_file, "kdsc_staging/ckd_baseline.parquet")
+
+out_file <- "data/ckd_10y.parquet"
+write_parquet(dt_10y, out_file)
+upload_to_dx(out_file, "kdsc_staging/ckd_10y.parquet")
+
+# Eligible eids with eligibility reason for downstream notebooks
+dt_eligible_eids <- bind_rows(
+  dt_matched_events %>% distinct(eid) %>% mutate(reason = "coded_ckd"),
+  dt_eligible_egfr %>% select(eid) %>% mutate(reason = "egfr_pair")
+) %>%
+  group_by(eid) %>%
+  summarise(reasons = paste(unique(reason), collapse = ","), .groups = "drop") %>%
+  as.data.table()
+
+out_file <- "data/ckd_eligible.parquet"
+write_parquet(dt_eligible_eids, out_file)
+upload_to_dx(out_file, "kdsc_staging/ckd_eligible.parquet")
+```

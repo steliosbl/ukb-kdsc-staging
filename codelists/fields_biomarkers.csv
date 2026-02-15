@@ -1,0 +1,5 @@
+var,biomarker,units,sample_type,supplier,instrumentation,analysis_method,group,UKB.Field.ID,Reportability.Field.ID
+creat,Creatinine,µmol/l,Serum,Beckman Coulter,AU5800,Enzymatic,Renal,30700,30706
+cyst,Cystatin C,mg/l,Serum,Siemens,ADVIA 1800,Latex enhanced immunoturbidimetric,Renal,30720,30726
+uriacc,Creatinine (enzymatic),µmol/l,Urine,Beckman Coulter,AU5400,Enzymatic,Renal,30510,30515
+uriamac,Microalbumin,mg/l,Urine,Randox,AU5400,Immunoturbidimetric,Renal,30500,30505

@@ -1,0 +1,196 @@
+---
+title: "UKB KDSC Raw Data Extraction"
+format: html
+---
+
+# 1. Raw Data Extraction
+This notebook extracts all raw UK Biobank data needed for CKD staging,
+reproducing the curate_fields.R and curate_data.R logic from data/common/.
+
+**Skip this notebook** if you already have pre-extracted CSV files from the
+parent repo. Instead, copy (or symlink) the relevant directories from
+`../data/common/` into `data/common/`:
+
+```
+mkdir -p data/common
+cp -r ../data/common/Demographics data/common/
+cp -r ../data/common/Biomarkers data/common/
+cp -r ../data/common/Primary\ Care data/common/
+cp -r ../data/common/Hospital\ Records data/common/
+cp -r ../data/common/Medical\ History data/common/
+cp -r ../data/common/Withdrawals data/common/
+```
+
+## 0. Setup
+```{r}
+source(knitr::purl("R00-parameters.rmd", quiet = TRUE, output = tempfile()))
+
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+library(arrow)
+library(lubridate)
+```
+
+## 1. Extract Data Dictionary
+```{r}
+data_dict <- get_data_dictionary()
+code_dict <- get_codings_dictionary()
+```
+
+## 2. Demographics
+Reproducing data/common/Demographics/scripts/.
+```{r}
+# Curate fields
+demo_field_ids <- c(53, 54, 22189, 31, 21003, 34, 52, 21000, 3140)
+fields <- rbindlist(lapply(demo_field_ids, function(fid) {
+  data_dict[name %like% sprintf("^p%s(_|$)", fid)]
+}))
+fields <- rbind(data_dict[entity == "participant" & name == "eid"], fields)
+
+dir.create("data/field_lists", showWarnings = FALSE, recursive = TRUE)
+fwrite(fields[entity == "participant", .(name)],
+  quote = FALSE, col.names = FALSE,
+  file = "data/field_lists/demographics_fields.txt"
+)
+
+# Run table exporter
+run_table_exporter(
+  field_file = "data/field_lists/demographics_fields.txt",
+  entity = "participant",
+  output_name = "kdsc_staging/demographics_raw",
+  dest_folder = "data/raw/demographics"
+)
+
+# Curate (reproduces data/common/Demographics/scripts/curate_data.R)
+source("curate/curate_demographics.R")
+```
+
+## 3. Biomarkers
+Reproducing data/common/Biomarkers/scripts/.
+```{r}
+# Curate fields - all biomarker fields
+biomarker_field_ids <- c(
+  30600, 30610, 30620, 30630, 30640, 30650, 30660, 30670,
+  30680, 30690, 30700, 30710, 30720, 30730, 30740, 30750, 30760, 30770, 30780,
+  30500, 30510, 30520, 30530
+)
+reportability_field_ids <- c(
+  30606, 30616, 30626, 30636, 30646, 30656, 30666,
+  30676, 30686, 30696, 30706, 30716, 30726, 30736, 30746, 30756, 30766, 30776,
+  30786, 30505, 30515, 30525, 30535
+)
+sample_field_ids <- c(20050, 20072)
+
+all_field_ids <- c(biomarker_field_ids, reportability_field_ids, sample_field_ids)
+fields <- rbindlist(lapply(all_field_ids, function(fid) {
+  data_dict[name %like% sprintf("^p%s(_|$)", fid)]
+}))
+fields <- rbind(data_dict[entity == "participant" & name == "eid"], fields)
+
+fwrite(fields[entity == "participant", .(name)],
+  quote = FALSE, col.names = FALSE,
+  file = "data/field_lists/biomarkers_fields.txt"
+)
+
+# Run table exporter
+run_table_exporter(
+  field_file = "data/field_lists/biomarkers_fields.txt",
+  entity = "participant",
+  output_name = "kdsc_staging/biomarkers_raw",
+  dest_folder = "data/raw/biomarkers",
+  instance_type = "mem1_ssd1_v2_x16"
+)
+
+# Curate (reproduces data/common/Biomarkers/scripts/curate_data.R)
+source("curate/curate_biomarkers.R")
+```
+
+## 4. Primary Care (GP)
+Reproducing data/common/Primary Care/scripts/.
+```{r}
+gp_fields <- data_dict[entity %like% "gp_"]
+
+for (entity_type in unique(gp_fields$entity)) {
+  fwrite(gp_fields[entity == entity_type, .(name)],
+    quote = FALSE, col.names = FALSE,
+    file = sprintf("data/field_lists/gp_fields_%s.txt", entity_type)
+  )
+}
+
+for (entity_type in unique(gp_fields$entity)) {
+  run_table_exporter(
+    field_file = sprintf("data/field_lists/gp_fields_%s.txt", entity_type),
+    entity = entity_type,
+    output_name = sprintf("kdsc_staging/gp_%s_raw", entity_type),
+    dest_folder = sprintf("data/raw/gp_%s", entity_type),
+    instance_type = "mem1_ssd1_v2_x16"
+  )
+}
+
+# Curate (reproduces data/common/Primary Care/scripts/curate_data.R)
+source("curate/curate_primary_care.R")
+```
+
+## 5. Hospital Records
+Reproducing data/common/Hospital Records/scripts/.
+```{r}
+for (entity_type in c("hesin", "hesin_diag", "hesin_oper")) {
+  fields <- data_dict[entity == entity_type]
+  fwrite(fields[, .(name)],
+    quote = FALSE, col.names = FALSE,
+    file = sprintf("data/field_lists/hospital_fields_%s.txt", entity_type)
+  )
+}
+
+for (entity_type in c("hesin", "hesin_diag", "hesin_oper")) {
+  run_table_exporter(
+    field_file = sprintf("data/field_lists/hospital_fields_%s.txt", entity_type),
+    entity = entity_type,
+    output_name = sprintf("kdsc_staging/hospital_%s_raw", entity_type),
+    dest_folder = sprintf("data/raw/hospital_%s", entity_type),
+    instance_type = "mem1_ssd1_v2_x16"
+  )
+}
+
+# Curate (reproduces data/common/Hospital Records/scripts/curate_data.R)
+source("curate/curate_hospital_records.R")
+```
+
+## 6. Medical History (Self-Reported)
+Reproducing data/common/Medical History/scripts/.
+```{r}
+# Extract fields 20002, 20008, 20009 and supporting touchscreen fields
+medical_field_ids <- c(20002, 20008, 20009, 2473, 53)
+fields <- rbindlist(lapply(medical_field_ids, function(fid) {
+  data_dict[name %like% sprintf("^p%s(_|$)", fid)]
+}))
+fields <- rbind(data_dict[entity == "participant" & name == "eid"], fields)
+
+fwrite(fields[entity == "participant", .(name)],
+  quote = FALSE, col.names = FALSE,
+  file = "data/field_lists/medical_history_fields.txt"
+)
+
+run_table_exporter(
+  field_file = "data/field_lists/medical_history_fields.txt",
+  entity = "participant",
+  output_name = "kdsc_staging/medical_history_raw",
+  dest_folder = "data/raw/medical_history",
+  instance_type = "mem1_ssd1_v2_x16"
+)
+
+# Curate (simplified - only field 20002 for kidney disease)
+source("curate/curate_medical_history.R")
+```
+
+## 7. Upload All Extracted Data
+```{r}
+# Upload all curated common data to DNAnexus
+for (dir_name in list.dirs("data/common", recursive = FALSE, full.names = FALSE)) {
+  files <- list.files(file.path("data/common", dir_name), pattern = "\\.(csv|txt)$", full.names = TRUE)
+  for (f in files) {
+    upload_to_dx(f, file.path("common", dir_name, basename(f)))
+  }
+}
+```

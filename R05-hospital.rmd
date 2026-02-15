@@ -1,0 +1,290 @@
+---
+title: "UKB KDSC Hospital Records & Code Matching"
+format: html
+---
+
+# 5. Hospital Records, Self-Report, and CKD Code Matching
+We read pre-curated hospital diagnoses, operations, and self-reported
+conditions from data/common/, then match CKD-relevant codes using
+the Kidney Catalyst codelist.
+
+## 0. Setup
+```{r}
+source(knitr::purl("R00-parameters.rmd", quiet = TRUE, output = tempfile()))
+
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+library(arrow)
+library(lubridate)
+```
+
+## 1. Data Sources
+```{r}
+dt_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
+dt_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
+
+# Hospital records (pre-curated CSVs from data/common/)
+dt_diagnoses <- fread("../data/common/Hospital Records/diagnoses.csv",
+  na.strings = c("", "NA")
+)
+dt_operations <- fread("../data/common/Hospital Records/operations.csv",
+  na.strings = c("", "NA")
+)
+
+# Code reference tables
+dt_icd10 <- fread("../data/common/Hospital Records/icd10_codes.csv")
+dt_opcs4 <- fread("../data/common/Hospital Records/opcs4_codes.csv")
+
+# Self-reported conditions
+dt_medical_history <- fread("../data/common/Medical History/medical_history.csv",
+  na.strings = c("", "NA")
+)
+
+# GP clinical records (for ICD-10 matching via mapped codes)
+dt_gp_clinical <- tryCatch(
+  fread("../data/common/Primary Care/gp_clinical_records.csv", na.strings = c("", "NA")),
+  error = function(e) data.table()
+)
+
+# Rename columns to match expected names
+if ("icd_code" %in% names(dt_diagnoses) && !"diag_icd" %in% names(dt_diagnoses)) {
+  setnames(dt_diagnoses, "icd_code", "diag_icd")
+}
+
+cat(sprintf("Hospital diagnoses: %d records\n", nrow(dt_diagnoses)))
+cat(sprintf("Hospital operations: %d records\n", nrow(dt_operations)))
+cat(sprintf("ICD-10 reference: %d codes\n", nrow(dt_icd10)))
+cat(sprintf("OPCS-4 reference: %d codes\n", nrow(dt_opcs4)))
+```
+
+## 2. Codelist
+Our codelist reflects the Kidney Catalyst's CKD definition. We match coded CKD,
+dialysis, congenital kidney disease, transplants, and kidney failure.
+```{r}
+codelist <- bind_rows(
+  tibble(
+    name = "coded_ckd",
+    code = c("N181", "N182", "N183", "N184", "N185", "N186", "N189"),
+    terminology = "icd10"
+  ),
+  tibble(
+    name = "coded_ckd",
+    code = c("5851", "5852", "5853", "5854", "5855", "5856", "5859"),
+    terminology = "icd9"
+  ),
+  tibble(
+    name = "ckd_nos",
+    code = c(
+      "E102", "E112", "E122", "E132", "E142",
+      "I129", "I130", "I139",
+      "I770", "M103",
+      "N03", "N04", "N08",
+      "N072", "N073", "N074"
+    ),
+    terminology = "icd10"
+  ),
+  tibble(
+    name = "dialysis",
+    code = c(
+      "Y602", "Y612", "Y622", "Y841", "Z49", "Z490", "Z491", "Z492",
+      "N186", "Z992", "T824"
+    ),
+    terminology = "icd10"
+  ),
+  tibble(
+    name = "dialysis",
+    code = c("X401", "X402", "X403", "X404", "X405", "X406", "X408", "X409"),
+    terminology = "opcs4"
+  ),
+  tibble(
+    name = "transplant",
+    code = c("T861", "Z940", "N165"),
+    terminology = "icd10"
+  ),
+  tibble(
+    name = "transplant",
+    code = c("M012", "M013", "M014", "M015", "M018", "M019", "M174", "M178", "M179"),
+    terminology = "opcs4"
+  ),
+  tibble(
+    name = "congenital",
+    code = c("Q60", "Q61", "Q62", "Q63", "Q64", "Q794", "P960"),
+    terminology = "icd10"
+  ),
+  tibble(
+    name = "kidney_failure",
+    code = c("I120", "I131", "I132", "N19"),
+    terminology = "icd10"
+  )
+)
+
+# Expand codelist by matching reference codes that start with codelist codes
+codelist_expanded <- bind_rows(
+  codelist %>%
+    filter(terminology == "icd10") %>%
+    cross_join(dt_icd10 %>% select(code)) %>%
+    filter(str_starts(code.y, code.x)) %>%
+    select(name, code = code.y, terminology),
+  codelist %>%
+    filter(terminology == "opcs4") %>%
+    cross_join(dt_opcs4 %>% select(code)) %>%
+    filter(str_starts(code.y, code.x)) %>%
+    select(name, code = code.y, terminology),
+  codelist %>%
+    filter(!terminology %in% c("icd10", "opcs4"))
+)
+
+codelist <- codelist_expanded
+
+ckd_stage_codes <- list(
+  stage_1 = "N181",
+  stage_2 = "N182",
+  stage_3 = "N183",
+  stage_4 = "N184",
+  stage_5 = "N185",
+  esrd = "N186",
+  nos = "N189"
+)
+
+codelist_selfreport <- tibble(
+  name = "kidney_failure",
+  code = as.integer(c(1192, 1193, 1194, 1609)),
+  field_id = as.integer(20002)
+)
+```
+
+## 3. Code Matching
+### 3.1 Hospital Diagnoses
+```{r}
+dt_matched_diagnoses <- dt_diagnoses %>%
+  lazy_dt() %>%
+  inner_join(
+    codelist %>% filter(terminology == "icd10"),
+    by = c("diag_icd" = "code")
+  ) %>%
+  select(eid, code = diag_icd, date = event_start, name) %>%
+  mutate(source = "secondary_care") %>%
+  as.data.table()
+
+cat(sprintf("Matched diagnoses: %d\n", nrow(dt_matched_diagnoses)))
+```
+
+### 3.2 Hospital Operations
+```{r}
+dt_matched_operations <- dt_operations %>%
+  lazy_dt() %>%
+  inner_join(
+    codelist %>% filter(terminology == "opcs4"),
+    by = c("opcs_code" = "code")
+  ) %>%
+  select(eid, code = opcs_code, date = imputed_operation_date, name) %>%
+  mutate(source = "secondary_care") %>%
+  as.data.table()
+
+cat(sprintf("Matched operations: %d\n", nrow(dt_matched_operations)))
+```
+
+### 3.3 GP Primary Care
+```{r}
+if (nrow(dt_gp_clinical) > 0 && "icd10_code" %in% names(dt_gp_clinical)) {
+  dt_matched_primarycare <- dt_gp_clinical %>%
+    lazy_dt() %>%
+    inner_join(
+      codelist %>% filter(terminology == "icd10"),
+      by = c("icd10_code" = "code")
+    ) %>%
+    select(eid, code = icd10_code, date = event_date, name) %>%
+    mutate(source = "primary_care") %>%
+    as.data.table()
+} else {
+  dt_matched_primarycare <- data.table(
+    eid = integer(), code = character(), date = as.IDate(character()),
+    name = character(), source = character()
+  )
+}
+
+cat(sprintf("Matched primary care: %d\n", nrow(dt_matched_primarycare)))
+```
+
+### 3.4 Self-Reported Kidney Disease
+From the pre-curated medical_history.csv, filter to field 20002 with
+kidney-related codes: 1192, 1193, 1194, 1609.
+```{r}
+kidney_codes <- c(1192, 1193, 1194, 1609)
+
+dt_selfreport <- dt_medical_history %>%
+  lazy_dt() %>%
+  filter(field_id == 20002 & code %in% kidney_codes) %>%
+  mutate(
+    code = as.character(code),
+    source = "self_report"
+  ) %>%
+  select(eid, code, field_id, date, source) %>%
+  as.data.table()
+
+dt_matched_selfreport <- dt_selfreport %>%
+  lazy_dt() %>%
+  mutate(code_int = as.integer(code)) %>%
+  inner_join(
+    codelist_selfreport,
+    by = c("code_int" = "code", "field_id")
+  ) %>%
+  select(eid, code, date, name) %>%
+  mutate(source = "self_report") %>%
+  as.data.table()
+
+cat(sprintf("Matched self-reported: %d\n", nrow(dt_matched_selfreport)))
+```
+
+### 3.5 Combined Matched Events
+```{r}
+dt_matched <- bind_rows(
+  dt_matched_diagnoses,
+  dt_matched_operations,
+  dt_matched_primarycare,
+  dt_matched_selfreport
+)
+
+cat(sprintf("Total matched CKD events: %d\n", nrow(dt_matched)))
+```
+
+## 4. Review
+```{r}
+dt_matched %>%
+  lazy_dt() %>%
+  left_join(dt_visits %>% lazy_dt() %>% filter(visit_index == 0), by = "eid") %>%
+  mutate(
+    prevalent_event = date <= assessment_date,
+    incident_event = date > assessment_date
+  ) %>%
+  group_by(eid) %>%
+  summarise(
+    prevalent_event = any(prevalent_event, na.rm = TRUE),
+    incident_event = any(incident_event, na.rm = TRUE)
+  ) %>%
+  summarise(
+    any = n(),
+    any_prevalent = sum(prevalent_event),
+    any_incident = sum(incident_event),
+    only_prevalent = sum(prevalent_event & !incident_event),
+    only_incident = sum(!prevalent_event & incident_event),
+    both = sum(prevalent_event & incident_event)
+  ) %>%
+  as_tibble() %>%
+  print()
+```
+
+## 5. Save
+```{r}
+out_file <- "data/ckd_matched_events.parquet"
+write_parquet(dt_matched, out_file)
+upload_to_dx(out_file, "kdsc_staging/ckd_matched_events.parquet")
+
+out_file <- "data/selfreport_kidney.parquet"
+write_parquet(dt_selfreport, out_file)
+upload_to_dx(out_file, "kdsc_staging/selfreport_kidney.parquet")
+
+cat(sprintf("CKD matched events saved: %d records from %d participants\n",
+            nrow(dt_matched), uniqueN(dt_matched$eid)))
+```
