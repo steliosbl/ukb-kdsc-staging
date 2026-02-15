@@ -30,7 +30,7 @@ dt_codelist <- fread("codelists/read_codes_renal.csv") %>%
   filter(include == 1) %>%
   select(read_code, term_description, type)
 
-gp_clinical <- fread("../data/common/Primary Care/gp_clinical_records.csv",
+gp_clinical <- fread("data/extracted/gp_clinical_records.csv",
   na.strings = c("", "NA")
 )
 ```
@@ -68,7 +68,7 @@ gp_code_summary <- dt_matches_all %>%
 
 out_file <- "data/gp_code_summary.parquet"
 write_parquet(gp_code_summary, out_file)
-upload_to_dx(out_file, "kdsc_staging/gp_code_summary.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/gp_code_summary.parquet")
 ```
 
 ## 3. Curate Numerical Values
@@ -263,5 +263,5 @@ cat(sprintf("GP ACR measurements: %d\n", dt_gp_long[type == "acr", .N]))
 ```{r}
 out_file <- "data/biomarkers_gp.parquet"
 write_parquet(dt_gp_long, out_file)
-upload_to_dx(out_file, "kdsc_staging/biomarkers_gp.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/biomarkers_gp.parquet")
 ```

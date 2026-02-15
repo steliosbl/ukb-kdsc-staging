@@ -494,5 +494,5 @@ saveRDS(
   ),
   out_file
 )
-upload_to_dx(out_file, "kdsc_staging/outputs/S01-results-flowchart.rds")
+upload_to_dx(out_file, "ukb-kdsc-staging/outputs/S01-results-flowchart.rds")
 ```

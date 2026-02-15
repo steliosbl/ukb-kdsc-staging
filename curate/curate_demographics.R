@@ -2,11 +2,11 @@ library(data.table)
 library(lubridate)
 
 # Pull down raw data that has been extracted with Table Exporter
-system("mkdir -p raw_data", wait=TRUE)
-system("dx download 'common/Demographics/raw_data/data.csv' -o raw_data/demographics.csv", wait=TRUE)
+system("mkdir -p data/raw", wait=TRUE)
+system("dx download 'ukb-kdsc-staging/extracted/demographics_raw/data.csv' -o data/raw/demographics.csv", wait=TRUE)
 
 # Load in raw data and curated field information
-raw <- fread("raw_data/demographics.csv")
+raw <- fread("data/raw/demographics.csv")
 info <- fread("Demographics/field_information.csv")
 
 # For fields only available at baseline, add _i0 to the field name for processing
@@ -175,15 +175,16 @@ info <- info[names(raw), on = .(var), nomatch=0]
 info <- info[, .(var, name, field.id)]
 
 # Write out
-fwrite(raw, quote=FALSE, file="Demographics/demographics.csv")
-fwrite(info, file="Demographics/column_information.csv")
+system("mkdir -p data/extracted/demographics", wait=TRUE)
+fwrite(raw, quote=FALSE, file="data/extracted/demographics/demographics.csv")
+fwrite(info, file="data/extracted/demographics/column_information.csv")
 
 # Upload to persistent storage
-system("dx upload Demographics/demographics.csv Demographics/column_information.csv --destination 'common/Demographics/'", wait=TRUE)
+system("dx upload data/extracted/demographics/demographics.csv data/extracted/demographics/column_information.csv --destination 'ukb-kdsc-staging/extracted/'", wait=TRUE)
 
 # Send raw data to deletion folder to reduce storage costs - this needs to be 
 # done in two steps, since we can't move two folders with the same name to the
 # same location, so here we rename with a random number and then move to trash
 rn <- as.integer(Sys.time())
-system(sprintf("dx mv 'common/Demographics/raw_data/' 'common/Demographics/raw_data_%s'", rn), wait=TRUE)
-system(sprintf("dx mv 'common/Demographics/raw_data_%s/' trash/", rn), wait=TRUE) 
+system(sprintf("dx mv 'ukb-kdsc-staging/extracted/demographics_raw/' 'ukb-kdsc-staging/extracted/demographics_raw_%s'", rn), wait=TRUE)
+system(sprintf("dx mv 'ukb-kdsc-staging/extracted/demographics_raw_%s/' trash/", rn), wait=TRUE) 

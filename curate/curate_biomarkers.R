@@ -1,8 +1,8 @@
 library(data.table)
 
 # Pull down raw data that has been extracted with Table Exporter
-system("mkdir -p raw_data", wait = TRUE)
-system("dx download 'common/Biomarkers/raw_data/data.csv' -o raw_data/biomarkers.csv", wait = TRUE)
+system("mkdir -p data/raw", wait = TRUE)
+system("dx download 'ukb-kdsc-staging/extracted/biomarkers_raw/data.csv' -o data/raw/biomarkers.csv", wait = TRUE)
 
 # Load pre-curated information sheets
 biomarker_info <- fread("biomarkers/biomarker_information.csv")
@@ -13,7 +13,7 @@ kidney_biomarkers <- c("creat", "uricreat", "urialb")
 biomarker_info <- biomarker_info[var %in% kidney_biomarkers]
 
 # Load in raw data
-raw <- fread("raw_data/biomarkers.csv")
+raw <- fread("data/raw/biomarkers.csv")
 
 # Split out instance (visit) and array index (repeat measure) fields so they
 # are rows instead of columns
@@ -181,7 +181,7 @@ limits <- biomarkers[
   (below_detection) | (above_detection),
   .(eid, visit_index, variable, type = ifelse(below_detection, "below detection limit", "above detection limit"))
 ]
-fwrite(limits, file = "biomarkers/measurements_outside_detection.csv")
+fwrite(limits, file = "data/extracted/biomarkers/measurements_outside_detection.csv")
 
 # Cast biomarker table back to wide format
 biomarkers <- dcast(biomarkers, eid + visit_index ~ variable, value.var = "value")
@@ -210,18 +210,13 @@ biomarkers <- biomarkers[, .SD, .SDcols = kidney_cols]
 
 # Update biomarker and sample information to only include kidney biomarkers
 fwrite(sample_info[var %in% c("eid", "visit_index", "no_blood_sample", "no_urine_sample", "fasting_time")],
-  file = "biomarkers/sample_information.csv"
+  file = "data/extracted/biomarkers/sample_information.csv"
 )
-fwrite(biomarker_info, file = "biomarkers/biomarker_information.csv")
+fwrite(biomarker_info, file = "data/extracted/biomarkers/biomarker_information.csv")
 
 # Write out
-fwrite(biomarkers, quote = FALSE, file = "biomarkers/biomarkers.csv")
+fwrite(biomarkers, quote = FALSE, file = "data/extracted/biomarkers/biomarkers.csv")
 
 # Upload to persistent storage
-system("dx upload biomarkers/biomarkers.csv biomarkers/measurements_outside_detection.csv --destination 'common/Biomarkers/'", wait = TRUE)
-system("dx upload biomarkers/sample_information.csv biomarkers/biomarker_information.csv --destination 'common/Biomarkers/'", wait = TRUE)
-
-# Send raw data to deletion folder to reduce storage costs
-rn <- as.integer(Sys.time())
-system(sprintf("dx mv 'common/Biomarkers/raw_data/' 'common/Biomarkers/raw_data_%s'", rn), wait = TRUE)
-system(sprintf("dx mv 'common/Biomarkers/raw_data_%s/' trash/", rn), wait = TRUE)
+system("dx upload data/extracted/biomarkers/biomarkers.csv data/extracted/biomarkers/measurements_outside_detection.csv --destination 'ukb-kdsc-staging/extracted/'", wait = TRUE)
+system("dx upload data/extracted/biomarkers/sample_information.csv data/extracted/biomarkers/biomarker_information.csv --destination 'ukb-kdsc-staging/extracted'", wait = TRUE)

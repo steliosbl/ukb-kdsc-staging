@@ -25,25 +25,25 @@ dt_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
 dt_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
 
 # Hospital records (pre-curated CSVs from data/common/)
-dt_diagnoses <- fread("../data/common/Hospital Records/diagnoses.csv",
+dt_diagnoses <- fread("data/extracted/diagnoses.csv",
   na.strings = c("", "NA")
 )
-dt_operations <- fread("../data/common/Hospital Records/operations.csv",
+dt_operations <- fread("data/extracted/operations.csv",
   na.strings = c("", "NA")
 )
 
 # Code reference tables
-dt_icd10 <- fread("../data/common/Hospital Records/icd10_codes.csv")
-dt_opcs4 <- fread("../data/common/Hospital Records/opcs4_codes.csv")
+dt_icd10 <- fread("data/extracted/icd10_codes.csv")
+dt_opcs4 <- fread("data/extracted/opcs4_codes.csv")
 
 # Self-reported conditions
-dt_medical_history <- fread("../data/common/Medical History/medical_history.csv",
+dt_medical_history <- fread("data/extracted/medical_history.csv",
   na.strings = c("", "NA")
 )
 
 # GP clinical records (for ICD-10 matching via mapped codes)
 dt_gp_clinical <- tryCatch(
-  fread("../data/common/Primary Care/gp_clinical_records.csv", na.strings = c("", "NA")),
+  fread("data/extracted/gp_clinical_records.csv", na.strings = c("", "NA")),
   error = function(e) data.table()
 )
 
@@ -279,11 +279,11 @@ dt_matched %>%
 ```{r}
 out_file <- "data/ckd_matched_events.parquet"
 write_parquet(dt_matched, out_file)
-upload_to_dx(out_file, "kdsc_staging/ckd_matched_events.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/ckd_matched_events.parquet")
 
 out_file <- "data/selfreport_kidney.parquet"
 write_parquet(dt_selfreport, out_file)
-upload_to_dx(out_file, "kdsc_staging/selfreport_kidney.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/selfreport_kidney.parquet")
 
 cat(sprintf("CKD matched events saved: %d records from %d participants\n",
             nrow(dt_matched), uniqueN(dt_matched$eid)))

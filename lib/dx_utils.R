@@ -23,21 +23,7 @@ download_from_dx <- function(in_path, dest_path) {
 #' Extract the UKB data dictionary (for field extraction)
 #' Returns the data dictionary as a data.table
 get_data_dictionary <- function() {
-  if (length(list.files(pattern = "data_dictionary")) == 0) {
-    if (system("python3 -c 'import pandas'", ignore.stderr = TRUE)) {
-      system("pip install pandas", wait = TRUE)
-    }
-    project_files <- system("dx ls", intern = TRUE)
-    dataset_file <- project_files[grepl("^app", project_files) & grepl("\\.dataset$", project_files)]
-    system(sprintf("dx extract_dataset %s -ddd", dataset_file), wait = TRUE)
-  }
-  data_dict_file <- list.files(pattern = "data_dictionary")
-  fread(data_dict_file)
-}
-
-#' Extract the UKB codings dictionary
-get_codings_dictionary <- function() {
-  if (length(list.files(pattern = "codings")) == 0) {
+  if (length(list.files("data/", pattern = "data_dictionary")) == 0) {
     if (system("python3 -c 'import pandas'", ignore.stderr = TRUE)) {
       system("pip install pandas", wait = TRUE)
     }
@@ -45,10 +31,26 @@ get_codings_dictionary <- function() {
     system("dx cd $DX_PROJECT_CONTEXT_ID")
     project_files <- system("dx ls", intern = TRUE)
     dataset_file <- project_files[grepl("^app", project_files) & grepl("\\.dataset$", project_files)]
-    system(sprintf("dx extract_dataset %s -ddd", dataset_file), wait = TRUE)
+    system(sprintf("dx extract_dataset %s -ddd -o data/", dataset_file), wait = TRUE)
   }
-  code_dict_file <- list.files(pattern = "codings")
-  fread(code_dict_file)
+  data_dict_file <- list.files("data/", pattern = "data_dictionary")
+  fread(paste0("data/", data_dict_file))
+}
+
+#' Extract the UKB codings dictionary
+get_codings_dictionary <- function() {
+  if (length(list.files("data/", pattern = "codings")) == 0) {
+    if (system("python3 -c 'import pandas'", ignore.stderr = TRUE)) {
+      system("pip install pandas", wait = TRUE)
+    }
+    Sys.unsetenv("DX_WORKSPACE_ID")
+    system("dx cd $DX_PROJECT_CONTEXT_ID")
+    project_files <- system("dx ls", intern = TRUE)
+    dataset_file <- project_files[grepl("^app", project_files) & grepl("\\.dataset$", project_files)]
+    system(sprintf("dx extract_dataset %s -ddd -o data/", dataset_file), wait = TRUE)
+  }
+  code_dict_file <- list.files("data/", pattern = "codings")
+  fread(paste0("data/", code_dict_file))
 }
 
 #' Run dx table-exporter for a set of fields and wait for completion
@@ -68,11 +70,11 @@ run_table_exporter <- function(field_file, entity, output_name, dest_folder,
   dataset_file <- system("dx ls *.dataset", intern = TRUE)
 
   # Upload field list and capture file ID
-  file_id <- system(sprintf("dx upload %s --destination kdsc_staging/ --brief", field_file), intern = TRUE)
+  file_id <- system(sprintf("dx upload %s --destination ukb-kdsc-staging/ --brief", field_file), intern = TRUE)
 
-  # Run table exporter (pass uploaded file via -ifield_names_file)
+  # Run table exporter (pass uploaded file via -field_names_file_txt)
   cmd <- sprintf(
-    "dx run table-exporter -idataset_or_cohort_or_dashboard=%s -ientity=%s -ifield_names_file=%s -ioutput=%s --instance-type %s --brief -y",
+    "dx run table-exporter -idataset_or_cohort_or_dashboard=%s -ientity=%s -ifield_names_file_txt=%s -ioutput=%s --instance-type %s --brief -y",
     dataset_file, entity, file_id, output_name, instance_type
   )
   job_id <- system(cmd, intern = TRUE)

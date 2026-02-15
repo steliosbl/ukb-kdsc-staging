@@ -11,8 +11,8 @@ new_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
 new_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
 
 # Load parent repo output
-parent_cohort <- read_parquet("../data/curated/cohort.parquet") %>% as.data.table()
-parent_visits <- read_parquet("../data/curated/visits.parquet") %>% as.data.table()
+parent_cohort <- read_parquet("../ckm-risk-prediction/data/curated/cohort.parquet") %>% as.data.table()
+parent_visits <- read_parquet("../ckm-risk-prediction/data/curated/visits.parquet") %>% as.data.table()
 
 # Test 1: Same set of participant IDs
 new_eids <- sort(unique(new_cohort$eid))

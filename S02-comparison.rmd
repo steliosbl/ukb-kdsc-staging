@@ -283,5 +283,5 @@ saveRDS(
   ),
   out_file
 )
-upload_to_dx(out_file, "kdsc_staging/comparison_lees_et_al.rds")
+upload_to_dx(out_file, "ukb-kdsc-staging/comparison_lees_et_al.rds")
 ```

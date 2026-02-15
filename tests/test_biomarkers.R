@@ -12,7 +12,7 @@ new_gp <- read_parquet("data/biomarkers_gp.parquet") %>% as.data.table()
 new_all <- rbind(new_ukb, new_gp, fill = TRUE)
 
 # Load parent repo output (covariates_long contains eGFR and ACR)
-parent_cov <- read_parquet("../data/curated/covariates_long.parquet") %>% as.data.table()
+parent_cov <- read_parquet("../ckm-risk-prediction/data/curated/covariates_long.parquet") %>% as.data.table()
 parent_egfr_acr <- parent_cov[type %in% c("egfr", "acr")]
 
 # Test 1: Coverage - we should have similar number of eGFR/ACR measurements

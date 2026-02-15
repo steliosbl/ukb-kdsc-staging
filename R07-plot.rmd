@@ -50,7 +50,7 @@ dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
 pdf(out_file, width = 297 / 25.4, height = 210 / 25.4)
 print(baseline_plot)
 dev.off()
-upload_to_dx(out_file, "kdsc_staging/outputs/R07-kdigo_baseline.pdf")
+upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-kdigo_baseline.pdf")
 ```
 
 ### 2.2 10-Year Heatmap (GP-linked)
@@ -62,7 +62,7 @@ out_file <- "data/outputs/R07-kdigo_10y.pdf"
 pdf(out_file, width = 297 / 25.4, height = 210 / 25.4)
 print(tenyear_plot)
 dev.off()
-upload_to_dx(out_file, "kdsc_staging/outputs/R07-kdigo_10y.pdf")
+upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-kdigo_10y.pdf")
 ```
 
 ## 3. Sankey Diagrams: Stage Transitions (Baseline → 10y)
@@ -83,7 +83,7 @@ sankey_stage <- plot_sankey_transitions(
 out_file <- "data/outputs/R07-sankey_stage.html"
 dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
 save_sankey_html(sankey_stage, out_file)
-# upload_to_dx(out_file, "kdsc_staging/outputs/R07-sankey_stage.html")
+# upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-sankey_stage.html")
 
 sankey_stage
 ```
@@ -99,7 +99,7 @@ sankey_kdigo <- plot_sankey_transitions(
 
 out_file <- "data/outputs/R07-sankey_kdigo.html"
 save_sankey_html(sankey_kdigo, out_file)
-# upload_to_dx(out_file, "kdsc_staging/outputs/R07-sankey_kdigo.html")
+# upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-sankey_kdigo.html")
 
 sankey_kdigo
 ```
@@ -115,7 +115,7 @@ sankey_risk <- plot_sankey_transitions(
 
 out_file <- "data/outputs/R07-sankey_risk.html"
 save_sankey_html(sankey_risk, out_file)
-# upload_to_dx(out_file, "kdsc_staging/outputs/R07-sankey_risk.html")
+# upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-sankey_risk.html")
 
 sankey_risk
 ```

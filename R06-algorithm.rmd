@@ -348,15 +348,15 @@ dt_10y$kdigo_risk %>% table()
 ```{r}
 out_file <- "data/ckd_timeline.parquet"
 write_parquet(dt_pheno, out_file)
-upload_to_dx(out_file, "kdsc_staging/ckd_timeline.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/ckd_timeline.parquet")
 
 out_file <- "data/ckd_baseline.parquet"
 write_parquet(dt_baseline, out_file)
-upload_to_dx(out_file, "kdsc_staging/ckd_baseline.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/ckd_baseline.parquet")
 
 out_file <- "data/ckd_10y.parquet"
 write_parquet(dt_10y, out_file)
-upload_to_dx(out_file, "kdsc_staging/ckd_10y.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/ckd_10y.parquet")
 
 # Eligible eids with eligibility reason for downstream notebooks
 dt_eligible_eids <- bind_rows(
@@ -369,5 +369,5 @@ dt_eligible_eids <- bind_rows(
 
 out_file <- "data/ckd_eligible.parquet"
 write_parquet(dt_eligible_eids, out_file)
-upload_to_dx(out_file, "kdsc_staging/ckd_eligible.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/ckd_eligible.parquet")
 ```

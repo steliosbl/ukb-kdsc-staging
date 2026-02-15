@@ -58,8 +58,8 @@ fwrite(fields[entity == "participant", .(name)],
 run_table_exporter(
   field_file = "data/field_lists/demographics_fields.txt",
   entity = "participant",
-  output_name = "kdsc_staging/demographics_raw",
-  dest_folder = "data/raw/demographics"
+  output_name = "ukb-kdsc-staging/extracted/demographics_raw",
+  dest_folder = "ukb-kdsc-staging/extracted/demographics_raw"
 )
 
 # Curate (reproduces data/common/Demographics/scripts/curate_data.R)
@@ -97,8 +97,8 @@ fwrite(fields[entity == "participant", .(name)],
 run_table_exporter(
   field_file = "data/field_lists/biomarkers_fields.txt",
   entity = "participant",
-  output_name = "kdsc_staging/biomarkers_raw",
-  dest_folder = "data/raw/biomarkers",
+  output_name = "ukb-kdsc-staging/extracted/biomarkers_raw",
+  dest_folder = "ukb-kdsc-staging/extracted/biomarkers_raw",
   instance_type = "mem1_ssd1_v2_x16"
 )
 
@@ -122,8 +122,8 @@ for (entity_type in unique(gp_fields$entity)) {
   run_table_exporter(
     field_file = sprintf("data/field_lists/gp_fields_%s.txt", entity_type),
     entity = entity_type,
-    output_name = sprintf("kdsc_staging/gp_%s_raw", entity_type),
-    dest_folder = sprintf("data/raw/gp_%s", entity_type),
+    output_name = sprintf("ukb-kdsc-staging/extracted/%s_raw", entity_type),
+    dest_folder = sprintf("ukb-kdsc-staging/extracted/%s_raw", entity_type),
     instance_type = "mem1_ssd1_v2_x16"
   )
 }
@@ -147,14 +147,14 @@ for (entity_type in c("hesin", "hesin_diag", "hesin_oper")) {
   run_table_exporter(
     field_file = sprintf("data/field_lists/hospital_fields_%s.txt", entity_type),
     entity = entity_type,
-    output_name = sprintf("kdsc_staging/hospital_%s_raw", entity_type),
-    dest_folder = sprintf("data/raw/hospital_%s", entity_type),
+    output_name = sprintf("ukb-kdsc-staging/extracted/%s_raw", entity_type),
+    dest_folder = sprintf("ukb-kdsc-staging/extracted/%s_raw", entity_type),
     instance_type = "mem1_ssd1_v2_x16"
   )
 }
 
 # Curate (reproduces data/common/Hospital Records/scripts/curate_data.R)
-source("curate/curate_hospital_records.R")
+source("curate/curate_hospital.R")
 ```
 
 ## 6. Medical History (Self-Reported)
@@ -175,8 +175,8 @@ fwrite(fields[entity == "participant", .(name)],
 run_table_exporter(
   field_file = "data/field_lists/medical_history_fields.txt",
   entity = "participant",
-  output_name = "kdsc_staging/medical_history_raw",
-  dest_folder = "data/raw/medical_history",
+  output_name = "ukb-kdsc-staging/extracted/medical_history_raw",
+  dest_folder = "ukb-kdsc-staging/extracted/medical_history_raw",
   instance_type = "mem1_ssd1_v2_x16"
 )
 
@@ -184,13 +184,8 @@ run_table_exporter(
 source("curate/curate_medical_history.R")
 ```
 
-## 7. Upload All Extracted Data
-```{r}
-# Upload all curated common data to DNAnexus
-for (dir_name in list.dirs("data/common", recursive = FALSE, full.names = FALSE)) {
-  files <- list.files(file.path("data/common", dir_name), pattern = "\\.(csv|txt)$", full.names = TRUE)
-  for (f in files) {
-    upload_to_dx(f, file.path("common", dir_name, basename(f)))
-  }
-}
+## 7. Note on Uploads
+All curated data is automatically uploaded to DNAnexus by the individual curation scripts.
+Each script uploads its outputs to `ukb-kdsc-staging/extracted/` and moves the raw data
+to trash to reduce storage costs.
 ```

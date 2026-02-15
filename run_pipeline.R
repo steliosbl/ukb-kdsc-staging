@@ -7,36 +7,36 @@
 
 library(knitr)
 print("Starting UK Biobank KDSC Staging Pipeline...")
-setwd("ukb-kdsc-staging") # Ensure we're in the correct directory
+
 run_stage <- function(rmd_file, stage_name) {
-    cat(sprintf("\n=== Running Stage: %s ===\n", stage_name))
-    tryCatch(
-        {
-            output_file <- tempfile(fileext = ".md")
-            knitr::knit(rmd_file, output = output_file, quiet = TRUE)
-            cat(sprintf("  COMPLETE: %s\n", stage_name))
-            return(TRUE)
-        },
-        error = function(e) {
-            cat(sprintf("  ERROR in %s: %s\n", stage_name, e$message))
-            stop(sprintf("Pipeline failed at stage: %s", stage_name))
-        }
-    )
+  cat(sprintf("\n=== Running Stage: %s ===\n", stage_name))
+  tryCatch(
+    {
+      output_file <- tempfile(fileext = ".md")
+      knitr::knit(rmd_file, output = output_file, quiet = TRUE)
+      cat(sprintf("  COMPLETE: %s\n", stage_name))
+      return(TRUE)
+    },
+    error = function(e) {
+      cat(sprintf("  ERROR in %s: %s\n", stage_name, e$message))
+      stop(sprintf("Pipeline failed at stage: %s", stage_name))
+    }
+  )
 }
 
 run_test <- function(test_file, test_name) {
-    cat(sprintf("\n=== Running Test: %s ===\n", test_name))
-    tryCatch(
-        {
-            source(test_file, local = new.env())
-            cat(sprintf("  COMPLETE: %s\n", test_name))
-            return(TRUE)
-        },
-        error = function(e) {
-            cat(sprintf("  FAILED: %s - %s\n", test_name, e$message))
-            stop(sprintf("Test failed: %s", test_name))
-        }
-    )
+  cat(sprintf("\n=== Running Test: %s ===\n", test_name))
+  tryCatch(
+    {
+      source(test_file, local = new.env())
+      cat(sprintf("  COMPLETE: %s\n", test_name))
+      return(TRUE)
+    },
+    error = function(e) {
+      cat(sprintf("  FAILED: %s - %s\n", test_name, e$message))
+      stop(sprintf("Test failed: %s", test_name))
+    }
+  )
 }
 
 cat("========================================\n")

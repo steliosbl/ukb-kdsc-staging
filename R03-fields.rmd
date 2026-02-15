@@ -27,7 +27,7 @@ source("lib/egfr.R")
 dt_cohort <- read_parquet("data/cohort.parquet") %>% as.data.table()
 dt_visits <- read_parquet("data/visits.parquet") %>% as.data.table()
 
-dt_biomarkers <- fread("../data/common/Biomarkers/biomarkers.csv") %>%
+dt_biomarkers <- fread("data/extracted/biomarkers.csv") %>%
   lazy_dt() %>%
   select(eid, visit_index, creat, cyst, uriacc, uriamac) %>%
   as.data.table()
@@ -111,5 +111,5 @@ for (t in c("egfr", "acr", "creat", "cyst", "uriamac", "uriacc")) {
 ```{r}
 out_file <- "data/biomarkers_ukb.parquet"
 write_parquet(dt_ukb_long, out_file)
-upload_to_dx(out_file, "kdsc_staging/biomarkers_ukb.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/biomarkers_ukb.parquet")
 ```

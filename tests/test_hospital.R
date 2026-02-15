@@ -11,9 +11,9 @@ new_matched <- read_parquet("data/ckd_matched_events.parquet") %>% as.data.table
 new_sr <- read_parquet("data/selfreport_kidney.parquet") %>% as.data.table()
 
 # Load parent repo outputs
-parent_matched <- read_parquet("../data/curated/ckd_matched_codes.parquet") %>% as.data.table()
-parent_timeline <- read_parquet("../data/curated/ckd_timeline.parquet") %>% as.data.table()
-parent_sr <- read_parquet("../data/curated/medical_history.parquet") %>% as.data.table()
+parent_matched <- read_parquet("../ckm-risk-prediction/data/curated/ckd_matched_codes.parquet") %>% as.data.table()
+parent_timeline <- read_parquet("../ckm-risk-prediction/data/curated/ckd_timeline.parquet") %>% as.data.table()
+parent_sr <- read_parquet("../ckm-risk-prediction/data/curated/medical_history.parquet") %>% as.data.table()
 
 # Test 1: Matched CKD events comparison
 new_events <- nrow(new_matched)

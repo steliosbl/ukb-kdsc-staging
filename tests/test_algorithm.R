@@ -39,7 +39,7 @@ new_baseline <- new_baseline %>%
   as.data.table()
 
 # Load parent repo output
-parent_timeline <- read_parquet("../data/curated/ckd_timeline.parquet") %>% as.data.table()
+parent_timeline <- read_parquet("../ckm-risk-prediction/data/curated/ckd_timeline.parquet") %>% as.data.table()
 
 # Test 1: Timeline record counts
 cat(sprintf(

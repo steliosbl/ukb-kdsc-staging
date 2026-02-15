@@ -1,7 +1,7 @@
 library(data.table)
 
 # Make output directory on local cloud workstation
-system("mkdir -p hospital_records/")
+system("mkdir -p data/extracted/hospital_records/")
 
 # Check if we have the necessary python libraries installed for dx extract_dataset
 if (system("python3 -c 'import pandas'", ignore.stderr=TRUE)) {
@@ -20,11 +20,13 @@ code_dict_file <- list.files(pattern="codings")
 code_dict <- fread(code_dict_file)
 
 # Pull down information that has been extracted with Table Exporter
-system("mkdir -p raw_data", wait=TRUE)
-system("dx download 'common/Hospital Records/raw_data/*' -o raw_data/", wait=TRUE)
+system("mkdir -p data/raw", wait=TRUE)
+for (entity_type in c("hesin", "hesin_diag", "hesin_oper")) {
+  system(sprintf("dx download 'ukb-kdsc-staging/extracted/%s_raw/data.csv' -o data/raw/%s.csv", entity_type, entity_type), wait=TRUE)
+}
 
 # Process main hospital records table
-hes <- fread("raw_data/hesin.csv")
+hes <- fread("data/raw/hesin.csv")
 
 setnames(hes, "ins_index", "record_number")
 
@@ -191,14 +193,14 @@ info <- rbind(use.names=FALSE,
   data.table("discharge_destination", "Destination on discharge from hospital (harmonized across all sources by UK Biobank)"),
   data.table("carer_support", "Is a carer available for the patient at their usual place of residence?")
 )
-fwrite(info, "hospital_records/hospital_records_column_information.csv")
+fwrite(info, "data/extracted/hospital_records/hospital_records_column_information.csv")
 
 # Order hospital records to match info column order
 hes <- hes[,.SD, .SDcols=info$var]
-fwrite(hes, "hospital_records/hospital_records.csv")
+fwrite(hes, "data/extracted/hospital_records/hospital_records.csv")
 
 # Load in and process diagnosis codes
-diag <- fread("raw_data/hesin_diag.csv", na.strings=c("", "NA"), colClasses = c("diag_icd9"="character"))
+diag <- fread("data/raw/hesin_diag.csv", na.strings=c("", "NA"), colClasses = c("diag_icd9"="character"))
 setnames(diag, "ins_index", "hospital_record")
 setnames(diag, "arr_index", "diagnosis_record")
 diag[, level := fcase(
@@ -237,7 +239,7 @@ no_end <- diag[is.na(event_end), unique(dnx_hesin_id)]
 diag[hes[dnx_hesin_id %in% no_start], on = .(dnx_hesin_id), event_end := discharge_date]
 diag[is.na(event_end), event_end := event_start]
 
-fwrite(diag, "hospital_records/diagnoses.csv")
+fwrite(diag, "data/extracted/hospital_records/diagnoses.csv")
 
 # Curate column information files
 info <- rbind(use.names=FALSE,
@@ -254,10 +256,10 @@ info <- rbind(use.names=FALSE,
   data.table("event_start", "Start date of the hospital episode the diagnoses took place in, or date of admission to hospital if episode information was missing"),
   data.table("event_end", "End date of the hospital episode the diagnoses took place in, or date of discharge from hospital if episode information was missing")
 )
-fwrite(info, "hospital_records/diagnoses_column_information.csv")
+fwrite(info, "data/extracted/hospital_records/diagnoses_column_information.csv")
 
 # Load in and process operation codes
-oper <- fread("raw_data/hesin_oper.csv", na.strings=c("", "NA"), colClasses = c("oper3"="character"))
+oper <- fread("data/raw/hesin_oper.csv", na.strings=c("", "NA"), colClasses = c("oper3"="character"))
 setnames(oper, "ins_index", "hospital_record")
 setnames(oper, "arr_index", "operation_record")
 oper[, procedure_type := ifelse(level == 1, "main", "secondary")]
@@ -309,17 +311,17 @@ info <- rbind(use.names=FALSE,
   data.table("post_operation_stay", "Duration (days) of post-operative stay in hospital"),
   data.table("hospital_nation", "England, Wales, and Scotland use different systems (HES, PEDW, and SMR) with differences in linkage available")
 )
-fwrite(info, "hospital_records/operations_column_information.csv")
+fwrite(info, "data/extracted/hospital_records/operations_column_information.csv")
 
 oper <- oper[,.SD,.SDcols=info$var]
-fwrite(oper, "hospital_records/operations.csv")
+fwrite(oper, "data/extracted/hospital_records/operations.csv")
 
 # Curate information about ICD-10 codes
 icd10 <- code_dict[coding_name == "data_coding_19"]
 icd10 <- icd10[, .(code, meaning, display_order, parent_code)]
 icd10[, appears_in_records := FALSE]
 icd10[diag[icd_version == 10], on = .(code=diag_icd), appears_in_records := TRUE]
-fwrite(icd10, "hospital_records/icd10_codes.csv")
+fwrite(icd10, "data/extracted/hospital_records/icd10_codes.csv")
 
 # Curate column information
 info <- rbind(use.names=FALSE,
@@ -329,14 +331,14 @@ info <- rbind(use.names=FALSE,
   data.table("parent_code", "Parent code of the ICD-10 code"),
   data.table("appears_in_records", "TRUE where this ICD-10 code is found in any hospital records, FALSE otherwise")
 )
-fwrite(info, "hospital_records/icd10_codes_column_information.csv")
+fwrite(info, "data/extracted/hospital_records/icd10_codes_column_information.csv")
 
 # Curate information about ICD-9 codes
 icd9 <- code_dict[coding_name == "data_coding_87"]
 icd9 <- icd9[, .(code, meaning, display_order, parent_code)]
 icd9[, appears_in_records := FALSE]
 icd9[diag[icd_version == 9], on = .(code=diag_icd), appears_in_records := TRUE]
-fwrite(icd9, "hospital_records/icd9_codes.csv")
+fwrite(icd9, "data/extracted/hospital_records/icd9_codes.csv")
 
 # Curate column information
 info <- rbind(use.names=FALSE,
@@ -346,14 +348,14 @@ info <- rbind(use.names=FALSE,
   data.table("parent_code", "Parent code of the ICD-9 code"),
   data.table("appears_in_records", "TRUE where this ICD-9 code is found in any hospital records, FALSE otherwise")
 )
-fwrite(info, "hospital_records/icd9_codes_column_information.csv")
+fwrite(info, "data/extracted/hospital_records/icd9_codes_column_information.csv")
 
 # Curate information about OPCS-4 codes
 opcs4 <- code_dict[coding_name == "data_coding_240"]
 opcs4 <- opcs4[, .(code, meaning, display_order, parent_code)]
 opcs4[, appears_in_records := FALSE]
 opcs4[oper[opcs_version == 4], on = .(code=opcs_code), appears_in_records := TRUE]
-fwrite(opcs4, "hospital_records/opcs4_codes.csv")
+fwrite(opcs4, "data/extracted/hospital_records/opcs4_codes.csv")
 
 # Curate column information
 info <- rbind(use.names=FALSE,
@@ -363,14 +365,14 @@ info <- rbind(use.names=FALSE,
   data.table("parent_code", "Parent code of the OPCS-4  code"),
   data.table("appears_in_records", "TRUE where this OPCS-4 code is found in any hospital records, FALSE otherwise")
 )
-fwrite(info, "hospital_records/opcs4_codes_column_information.csv")
+fwrite(info, "data/extracted/hospital_records/opcs4_codes_column_information.csv")
 
 # Curate information about OPCS-3 codes
 opcs3 <- code_dict[coding_name == "data_coding_259"]
 opcs3 <- opcs3[, .(code, meaning, display_order, parent_code)]
 opcs3[, appears_in_records := FALSE]
 opcs3[oper[opcs_version == 3], on = .(code=opcs_code), appears_in_records := TRUE]
-fwrite(opcs3, "hospital_records/opcs3_codes.csv")
+fwrite(opcs3, "data/extracted/hospital_records/opcs3_codes.csv")
 
 # Curate column information
 info <- rbind(use.names=FALSE,
@@ -380,14 +382,16 @@ info <- rbind(use.names=FALSE,
   data.table("parent_code", "Parent code of the OPCS-3  code"),
   data.table("appears_in_records", "TRUE where this OPCS-3 code is found in any hospital records, FALSE otherwise")
 )
-fwrite(info, "hospital_records/opcs3_codes_column_information.csv")
+fwrite(info, "data/extracted/hospital_records/opcs3_codes_column_information.csv")
 
 # Upload to persistent storage
-system("dx upload hospital_records/* --destination 'common/Hospital Records/'")
+system("dx upload data/extracted/hospital_records/* --destination 'ukb-kdsc-staging/extracted/'")
 
 # Send raw data to deletion folder to reduce storage costs - this needs to be 
 # done in two steps, since we can't move two folders with the same name to the
 # same location, so here we rename with a random number and then move to trash
 rn <- as.integer(Sys.time())
-system(sprintf("dx mv 'common/Hospital Records/raw_data/' 'common/Hospital Records/raw_data_%s'", rn), wait=TRUE)
-system(sprintf("dx mv 'common/Hospital Records/raw_data_%s/' trash/", rn), wait=TRUE) 
+for (entity_type in c("hesin", "hesin_diag", "hesin_oper")) {
+  system(sprintf("dx mv 'ukb-kdsc-staging/extracted/%s_raw/' 'ukb-kdsc-staging/extracted/%s_raw_%s'", entity_type, entity_type, rn), wait=TRUE)
+  system(sprintf("dx mv 'ukb-kdsc-staging/extracted/%s_raw_%s/' trash/", entity_type, rn), wait=TRUE)
+} 

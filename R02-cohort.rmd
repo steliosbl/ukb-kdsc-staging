@@ -27,9 +27,9 @@ library(arrow)
 
 ## 1. Data Sources
 ```{r}
-dt_demo <- fread("../data/common/Demographics/demographics.csv")
-dt_gp_regs <- fread("../data/common/Primary Care/gp_registrations.csv")
-dt_followup <- fread("../data/common/Follow-up/follow_up.csv")
+dt_demo <- fread("data/extracted/demographics.csv")
+dt_gp_regs <- fread("data/extracted/gp_registrations.csv")
+dt_followup <- fread("data/extracted/follow_up.csv")
 ```
 
 ## 2. Prepare
@@ -47,18 +47,7 @@ dt_cohort <- dt_demo %>%
   as.data.table()
 ```
 
-### 2.2 Withdrawals
-```{r}
-withdrawn_eids <- fread("../data/common/Withdrawals/w608471_20250818.csv") %>%
-  pull(V1)
-
-dt_cohort <- dt_cohort %>%
-  lazy_dt() %>%
-  filter(!(eid %in% withdrawn_eids)) %>%
-  as.data.table()
-```
-
-### 2.3 GP Linkage
+### 2.2 GP Linkage
 Determine which participants have linked GP records from the registration table.
 ```{r}
 gp_linked_eids <- dt_gp_regs[, unique(eid)]
@@ -120,11 +109,11 @@ dt_cohort_out <- dt_cohort[, .(eid, date_of_birth, sex, has_gp, baseline_date, c
 out_file <- "data/cohort.parquet"
 dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
 write_parquet(dt_cohort_out, out_file)
-upload_to_dx(out_file, "kdsc_staging/cohort.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/cohort.parquet")
 
 out_file <- "data/visits.parquet"
 write_parquet(dt_visits, out_file)
-upload_to_dx(out_file, "kdsc_staging/visits.parquet")
+upload_to_dx(out_file, "ukb-kdsc-staging/visits.parquet")
 
 cat(sprintf("Cohort: %d individuals\n", nrow(dt_cohort_out)))
 cat(sprintf("GP-linked: %d\n", sum(dt_cohort_out$has_gp)))

@@ -11,7 +11,7 @@ if (suppressMessages(suppressWarnings(!require(openxlsx)))) {
 # mem1_ssd1_v2_x72
 
 # create output directory on local cloud workstation
-system("mkdir -p primary_care")
+system("mkdir -p data/extracted/primary_care")
 
 # Check if we have the necessary python libraries installed for dx extract_dataset
 if (system("python3 -c 'import pandas'", ignore.stderr=TRUE)) {
@@ -30,20 +30,22 @@ code_dict_file <- list.files(pattern="coding")
 code_dict <- fread(code_dict_file)
 
 # Download raw data extracted by Table Exporter
-system("mkdir -p raw_data")
-system("dx download 'common/Primary Care/raw_data/*' -o raw_data/")
+system("mkdir -p data/raw")
+for (entity_type in c("gp_registrations", "gp_clinical", "gp_scripts")) {
+  system(sprintf("dx download 'ukb-kdsc-staging/extracted/%s_raw/data.csv' -o data/raw/%s.csv", entity_type, entity_type), wait=TRUE)
+}
 
 # Download Read code mappings and documentation
-system("wget -P primary_care/ https://biobank.ndph.ox.ac.uk/showcase/ukb/auxdata/primarycare_codings.zip")
-system("unzip primary_care/primarycare_codings.zip -d primary_care")
-system("mv primary_care/all_lkps_maps_v4.xlsx primary_care/read_code_lookup_maps.xlsx")
-system("mv primary_care/all_lkps_maps_variable_names_definitions_v4.pdf primary_care/read_code_lookup_maps_documentation.pdf")
-system("rm primary_care/primarycare_codings.zip")
+system("wget -P data/extracted/primary_care/ https://biobank.ndph.ox.ac.uk/showcase/ukb/auxdata/primarycare_codings.zip")
+system("unzip data/extracted/primary_care/primarycare_codings.zip -d data/extracted/primary_care")
+system("mv data/extracted/primary_care/all_lkps_maps_v4.xlsx data/extracted/primary_care/read_code_lookup_maps.xlsx")
+system("mv data/extracted/primary_care/all_lkps_maps_variable_names_definitions_v4.pdf data/extracted/primary_care/read_code_lookup_maps_documentation.pdf")
+system("rm data/extracted/primary_care/primarycare_codings.zip")
 
 #################################
 # Curate GP registration records
 #################################
-gp_registrations <- fread("raw_data/gp_registrations.csv")
+gp_registrations <- fread("data/raw/gp_registrations.csv")
 
 gp_registrations[, data_provider := as.character(data_provider)]
 gp_registrations[code_dict[coding_name == "data_coding_626"], on = .(data_provider=code), data_provider := meaning]
@@ -57,7 +59,7 @@ gp_registrations[, deduct_date := as.character(deduct_date)]
 gp_registrations[code_dict[coding_name == "data_coding_819"], on = .(deduct_date=code), deduct_date := NA]
 setnames(gp_registrations, "deduct_date", "deregistration_date")
 
-fwrite(gp_registrations, "primary_care/gp_registrations.csv")
+fwrite(gp_registrations, "data/extracted/primary_care/gp_registrations.csv")
 
 # Curate column information
 info <- rbind(use.names=FALSE,
@@ -66,12 +68,12 @@ info <- rbind(use.names=FALSE,
   data.table("registration_date", "Date participant registered at a specific general practice"),
   data.table("deregistration_date", "Date particpant was de-registered from that general practice, if applicable")
 )
-fwrite(info, "primary_care/gp_registrations_column_information.csv")
+fwrite(info, "data/extracted/primary_care/gp_registrations_column_information.csv")
 
 #################################
 # Curate clinical records
 #################################
-clinical_records <- fread("raw_data/gp_clinical.csv", na.strings=c("", "NA"))
+clinical_records <- fread("data/raw/gp_clinical.csv", na.strings=c("", "NA"))
 
 clinical_records[, data_provider := as.character(data_provider)]
 clinical_records[code_dict[coding_name == "data_coding_626"], on = .(data_provider=code), data_provider := meaning]
@@ -88,8 +90,8 @@ clinical_records[read_version == 3, read_code := read_3]
 clinical_records[, c("read_2", "read_3") := NULL]
 
 # Add in mappings to ICD-10 codes
-read2_to_icd10 <- as.data.table(read.xlsx("primary_care/read_code_lookup_maps.xlsx", "read_v2_icd10"))
-read3_to_icd10 <- as.data.table(read.xlsx("primary_care/read_code_lookup_maps.xlsx", "read_ctv3_icd10"))
+read2_to_icd10 <- as.data.table(read.xlsx("data/extracted/primary_care/read_code_lookup_maps.xlsx", "read_v2_icd10"))
+read3_to_icd10 <- as.data.table(read.xlsx("data/extracted/primary_care/read_code_lookup_maps.xlsx", "read_ctv3_icd10"))
 read_to_icd10 <- rbind(idcol="read_version", "2"=read2_to_icd10[,.(read_code, icd10_code)], "3"=read3_to_icd10[,.(read_code, icd10_code)])
 read_to_icd10[, read_version := as.numeric(read_version)]
 clinical_records[read_to_icd10, on = .(read_version, read_code), icd10_code := i.icd10_code]
@@ -128,13 +130,13 @@ info <- rbind(use.names=FALSE,
 )
 
 clinical_records <- clinical_records[,.SD,.SDcols=info$var]
-fwrite(clinical_records, "primary_care/gp_clinical_records.csv")
-fwrite(info, "primary_care/gp_clinical_records_column_information.csv")
+fwrite(clinical_records, "data/extracted/primary_care/gp_clinical_records.csv")
+fwrite(info, "data/extracted/primary_care/gp_clinical_records_column_information.csv")
 
 #################################
 # Curate prescription records
 #################################
-prescriptions <- fread("raw_data/gp_scripts.csv", na.strings=c("", "NA"))
+prescriptions <- fread("data/raw/gp_scripts.csv", na.strings=c("", "NA"))
 
 prescriptions[, data_provider := as.character(data_provider)]
 prescriptions[code_dict[coding_name == "data_coding_626"], on = .(data_provider=code), data_provider := meaning]
@@ -143,7 +145,7 @@ prescriptions[code_dict[coding_name == "data_coding_626"], on = .(data_provider=
 prescriptions[, issue_date := as.character(issue_date)]
 prescriptions[code_dict[coding_name == "data_coding_819"], on = .(issue_date=code), issue_date := NA] 
 
-fwrite(prescriptions, "primary_care/gp_prescriptions.csv")
+fwrite(prescriptions, "data/extracted/primary_care/gp_prescriptions.csv")
 
 # Curate column information
 info <- rbind(use.names=FALSE,
@@ -156,19 +158,19 @@ info <- rbind(use.names=FALSE,
   data.table("drug_name", "Name of the prescribed drug"),
   data.table("quantity", "Amount and/or dosage prescribed")
 )
-fwrite(info, "primary_care/gp_prescriptions_column_information.csv")
+fwrite(info, "data/extracted/primary_care/gp_prescriptions_column_information.csv")
 
 #########################################################
 # Curate information on Read-2 codes present in the data
 #########################################################
-read2 <- as.data.table(read.xlsx("primary_care/read_code_lookup_maps.xlsx", sheet="read_v2_lkp"))
+read2 <- as.data.table(read.xlsx("data/extracted/primary_care/read_code_lookup_maps.xlsx", sheet="read_v2_lkp"))
 read2 <- read2[!is.na(term_code),.(read_code, description=term_description)]
 read2[read2_to_icd10, on = .(read_code), icd10 := icd10_code]
-read2_to_opcs4 <- as.data.table(read.xlsx("primary_care/read_code_lookup_maps.xlsx", sheet="read_v2_opcs4"))
+read2_to_opcs4 <- as.data.table(read.xlsx("data/extracted/primary_care/read_code_lookup_maps.xlsx", sheet="read_v2_opcs4"))
 read2[read2_to_opcs4, on = .(read_code), opcs4 := opcs_4.2_code]
 read2[, in_clinical_records := FALSE]
 read2[read_code %in% clinical_records[read_version == 2, unique(read_code)], in_clinical_records := TRUE]
-fwrite(read2, "primary_care/read2_codes.csv")
+fwrite(read2, "data/extracted/primary_care/read2_codes.csv")
 
 info <- rbind(use.names=FALSE,
   data.table(var="read_code", name="Read-2 code"),
@@ -177,19 +179,19 @@ info <- rbind(use.names=FALSE,
   data.table("opcs4", "OPCS-4 code mapped to Read code by UK Biobank in read_v2_opcs4 sheet in read_code_lookup_maps.xlsx"),
   data.table("in_clinical_records", "TRUE/FALSE indicating whether there are any instances of the Read code in gp_clincal_records.csv")
 )
-fwrite(info, "primary_care/read2_codes_column_information.csv")
+fwrite(info, "data/extracted/primary_care/read2_codes_column_information.csv")
 
 #########################################################
 # Curate information on READ-3 codes present in the data
 #########################################################
-read3 <- as.data.table(read.xlsx("primary_care/read_code_lookup_maps.xlsx", sheet="read_ctv3_lkp"))
+read3 <- as.data.table(read.xlsx("data/extracted/primary_care/read_code_lookup_maps.xlsx", sheet="read_ctv3_lkp"))
 read3 <- read3[!is.na(status),.(read_code, description=term_description)]
 read3[read3_to_icd10, on = .(read_code), icd10 := icd10_code]
-read3_to_opcs4 <- as.data.table(read.xlsx("primary_care/read_code_lookup_maps.xlsx", sheet="read_ctv3_opcs4"))
+read3_to_opcs4 <- as.data.table(read.xlsx("data/extracted/primary_care/read_code_lookup_maps.xlsx", sheet="read_ctv3_opcs4"))
 read3[read3_to_opcs4, on = .(read_code), opcs4 := opcs4_code]
 read3[, in_clinical_records := FALSE]
 read3[read_code %in% clinical_records[read_version == 3, unique(read_code)], in_clinical_records := TRUE]
-fwrite(read3, "primary_care/read3_codes.csv")
+fwrite(read3, "data/extracted/primary_care/read3_codes.csv")
 
 info <- rbind(use.names=FALSE,
   data.table(var="read_code", name="Read-3 code"),
@@ -198,12 +200,12 @@ info <- rbind(use.names=FALSE,
   data.table("opcs4", "OPCS-4 code mapped to Read code by UK Biobank in read_ctv3_opcs4 sheet in read_code_lookup_maps.xlsx"),
   data.table("in_clinical_records", "TRUE/FALSE indicating whether there are any instances of the Read code in gp_clincal_records.csv")
 )
-fwrite(info, "primary_care/read3_codes_column_information.csv")
+fwrite(info, "data/extracted/primary_care/read3_codes_column_information.csv")
 
 ###############################
 # Upload to persistent storage
 ###############################
-system("dx upload primary_care/* --destination 'common/Primary Care/'", wait=TRUE)
+system("dx upload data/extracted/primary_care/* --destination 'ukb-kdsc-staging/extracted/'", wait=TRUE)
 
 ###############################
 # Cleanup
@@ -212,5 +214,7 @@ system("dx upload primary_care/* --destination 'common/Primary Care/'", wait=TRU
 # done in two steps, since we can't move two folders with the same name to the
 # same location, so here we rename with a random number and then move to trash
 rn <- as.integer(Sys.time())
-system(sprintf("dx mv 'common/Primary Care/raw_data/' 'common/Primary Care/raw_data_%s'", rn), wait=TRUE)
-system(sprintf("dx mv 'common/Primary Care/raw_data_%s/' trash/", rn), wait=TRUE) 
+for (entity_type in c("gp_registrations", "gp_clinical", "gp_scripts")) {
+  system(sprintf("dx mv 'ukb-kdsc-staging/extracted/%s_raw/' 'ukb-kdsc-staging/extracted/%s_raw_%s'", entity_type, entity_type, rn), wait=TRUE)
+  system(sprintf("dx mv 'ukb-kdsc-staging/extracted/%s_raw_%s/' trash/", entity_type, rn), wait=TRUE)
+} 

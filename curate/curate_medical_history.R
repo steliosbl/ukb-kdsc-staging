@@ -3,14 +3,15 @@ library(lubridate)
 
 # Pull down extracted demographic information so we have date of assessment and
 # age at assessment
-system("dx download 'common/Demographics/demographics.csv'")
+system("mkdir -p data/extracted", wait=TRUE)
+system("dx download 'ukb-kdsc-staging/extracted/demographics.csv' -o data/extracted/demographics.csv")
 
 # Pull down raw data that has been raw with Table Exporter
-system("mkdir -p raw_data", wait=TRUE)
-system("dx download 'common/Medical History/raw_data/data.csv' -o raw_data/medical_history.csv", wait=TRUE)
+system("mkdir -p data/raw", wait=TRUE)
+system("dx download 'ukb-kdsc-staging/extracted/medical_history_raw/data.csv' -o data/raw/medical_history.csv", wait=TRUE)
 
 # Load in raw data and curated field information
-raw <- fread("raw_data/medical_history.csv", na.strings=c("", "NA"))
+raw <- fread("data/raw/medical_history.csv", na.strings=c("", "NA"))
 info <- fread("medical_history/field_information.csv")
 
 # Convert to long format per field - we split this out into a list, one per 
@@ -1425,7 +1426,7 @@ codes[interview_year_at_diagnosis, on = .(eid, visit_index, repeat_index, field_
 
 # Add in age and date at assessment so we can impute dates and other missing age data
 assessment <- fread(
-  file = "demographics.csv",
+  file = "data/extracted/demographics.csv",
   select = c("eid", "visit_index", "age_decimal", "assessment_date"),
 )
 codes[assessment, on = .(eid, visit_index), age_assessment := i.age_decimal] # age decimal incorporates birth month, with specific day imputed as 15th of month
@@ -1679,7 +1680,8 @@ codes <- cbind(sr_id=NA_character_, codes)
 codes[, sr_id := sprintf("%s-%s-%s-%s", eid, visit_index, field_id, code)]
 
 # Write out
-fwrite(codes, file="medical_history/medical_history.csv")
+system("mkdir -p data/extracted/medical_history", wait=TRUE)
+fwrite(codes, file="data/extracted/medical_history/medical_history.csv")
 
 # Curate information on columns
 info <- rbind(use.names=FALSE,
@@ -1694,7 +1696,7 @@ info <- rbind(use.names=FALSE,
   data.table("inferred", "Date/age at diagnosis was inferred based on the field information; see README.txt for more details"),
   data.table("imputed", "Date/age at diagnosis was imputed based on some possible time frame; see README.txt for more details")
 )
-fwrite(info, file="medical_history/medical_history_column_information.csv")
+fwrite(info, file="data/extracted/medical_history/medical_history_column_information.csv")
 
 # Curate information on fields
 info <- rbind(
@@ -1836,7 +1838,7 @@ info <- rbind(
              age="Age of assessment minus 1 year", date="Imputed from age at event")
 )
 
-fwrite(info, file="medical_history/field_information.csv")
+fwrite(info, file="data/extracted/medical_history/field_information.csv")
 
 # Add mapping file giving code - label mappings for analyst lookup
 code_map <- unique(codes[,.(field_id, code, label)])
@@ -1844,14 +1846,14 @@ code_map <- rbind(code_map[code > 0][order(code)], code_map[code < 0][order(code
 code_map[, field_id := as.character(field_id)]
 info[, field_id := as.character(field_id)]
 code_map <- code_map[info[,.(field_id)], on = .(field_id), nomatch=0]
-fwrite(code_map, file="medical_history/code_labels.csv")
+fwrite(code_map, file="data/extracted/medical_history/code_labels.csv")
 
 # Upload to persistent storage
-system("dx upload medical_history/* --destination 'common/Medical History/'", wait=TRUE)
+system("dx upload data/extracted/medical_history/* --destination 'ukb-kdsc-staging/extracted/'", wait=TRUE)
 
 # Send raw data to deletion folder to reduce storage costs - this needs to be 
 # done in two steps, since we can't move two folders with the same name to the
 # same location, so here we rename with a random number and then move to trash
 rn <- as.integer(Sys.time())
-system(sprintf("dx mv 'common/Medical History/raw_data/' 'common/Medical History/raw_data_%s'", rn), wait=TRUE)
-system(sprintf("dx mv 'common/Medical History/raw_data_%s/' trash/", rn), wait=TRUE) 
+system(sprintf("dx mv 'ukb-kdsc-staging/extracted/medical_history_raw/' 'ukb-kdsc-staging/extracted/medical_history_raw_%s'", rn), wait=TRUE)
+system(sprintf("dx mv 'ukb-kdsc-staging/extracted/medical_history_raw_%s/' trash/", rn), wait=TRUE) 
