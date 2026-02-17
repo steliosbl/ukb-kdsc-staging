@@ -1,20 +1,29 @@
+# Sankey diagram of CKD stage transitions using ggforce parallel sets.
+# Replaces the previous networkD3/HTML implementation with a static ggplot.
+
+library(ggforce)
+library(cowplot)
+library(dplyr)
+
 plot_sankey_transitions <- function(dt_start, dt_stop,
                                     column = "stage",
                                     start_label = "Baseline",
                                     end_label = "10y",
-                                    min_flow = 10) {
-    library(networkD3)
-    library(htmlwidgets)
-    library(dplyr)
-
+                                    min_flow = 10,
+                                    title = NULL,
+                                    out_file = NULL) {
     if (!column %in% c("stage", "kdigo", "kdigo_risk")) {
         stop("column must be one of: 'stage', 'kdigo', 'kdigo_risk'")
     }
 
+    # --- Configuration ---
+    na_labels <- c(stage = "ACR only", kdigo = "Unclassified", kdigo_risk = "Unclassified")
+    na_label <- na_labels[[column]]
+
     column_orders <- list(
-        stage = c("G1", "G2", "G3", "G3a", "G3b", "G4", "G5"),
+        stage = c("ACR only", "G1", "G2", "G3", "G3a", "G3b", "G4", "G5"),
         kdigo = c(
-            "G1", "G2", "G3", "G3a", "G3b", "G4", "G5",
+            "No CKD", "G1", "G2", "G3", "G3a", "G3b", "G4", "G5",
             "G1A1", "G1A2", "G1A3",
             "G2A1", "G2A2", "G2A3",
             "G3A1", "G3A2", "G3A3",
@@ -28,127 +37,158 @@ plot_sankey_transitions <- function(dt_start, dt_stop,
     )
 
     set2_colors <- c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3")
-
     color_scales <- list(
-        stage = setNames(set2_colors[1:7], c("G1", "G2", "G3", "G3a", "G3b", "G4", "G5")),
+        stage = setNames(set2_colors[1:8], c("ACR only", "G1", "G2", "G3", "G3a", "G3b", "G4", "G5")),
         kdigo_risk = setNames(set2_colors[c(1, 6, 2, 5, 8)], c("Low", "Moderate", "High", "Very High", "Unclassified"))
     )
 
-    value_order <- column_orders[[column]]
+    AXIS_W <- 0.12
 
-    dt_transitions <- dt_start %>%
-        select(eid, start_value = !!sym(column)) %>%
+    value_order <- column_orders[[column]]
+    colors_use <- if (column %in% names(color_scales)) color_scales[[column]] else NULL
+
+    # --- Count transitions ---
+    dt_trans <- dt_start %>%
+        select(eid, start = !!sym(column)) %>%
         inner_join(
-            dt_stop %>% select(eid, end_value = !!sym(column)),
+            dt_stop %>% select(eid, end = !!sym(column)),
             by = "eid"
         ) %>%
-        filter(!is.na(start_value), !is.na(end_value)) %>%
         mutate(
-            start_value = as.character(start_value),
-            end_value = as.character(end_value)
+            start = coalesce(start, na_label),
+            end = coalesce(end, na_label)
         ) %>%
-        count(start_value, end_value, name = "n") %>%
-        filter(n > min_flow)
+        count(start, end, name = "n") %>%
+        filter(n >= min_flow) %>%
+        as.data.frame()
 
-    # Get all unique values from the actual data
-    all_values <- unique(c(dt_transitions$start_value, dt_transitions$end_value))
+    # Restrict to values present in the data, in canonical order
+    present <- intersect(value_order, unique(c(dt_trans$start, dt_trans$end)))
+    dt_trans$start <- factor(dt_trans$start, levels = present)
+    dt_trans$end <- factor(dt_trans$end, levels = present)
+    dt_trans <- dt_trans[!is.na(dt_trans$start) & !is.na(dt_trans$end), ]
 
-    # Add any values not in predefined order to the end
-    missing_values <- setdiff(all_values, value_order)
-    if (length(missing_values) > 0) {
-        message(sprintf(
-            "Adding %d missing values to order: %s",
-            length(missing_values), paste(missing_values, collapse = ", ")
-        ))
-        value_order <- c(value_order, sort(missing_values))
-    }
+    # Rename columns to axis labels for ggforce
+    names(dt_trans)[1:2] <- c(start_label, end_label)
 
-    start_totals <- dt_transitions %>%
-        group_by(start_value) %>%
-        summarise(total = sum(n), .groups = "drop") %>%
-        mutate(pct = 100 * total / sum(total))
+    # Compute per-axis counts for labels
+    start_counts <- dt_trans %>%
+        group_by(cat = .data[[start_label]]) %>%
+        summarise(count = sum(n), .groups = "drop") %>%
+        mutate(N = sum(count), pct = 100 * count / N, axis_idx = 1)
+    end_counts <- dt_trans %>%
+        group_by(cat = .data[[end_label]]) %>%
+        summarise(count = sum(n), .groups = "drop") %>%
+        mutate(N = sum(count), pct = 100 * count / N, axis_idx = 2)
+    all_counts <- bind_rows(start_counts, end_counts)
 
-    end_totals <- dt_transitions %>%
-        group_by(end_value) %>%
-        summarise(total = sum(n), .groups = "drop") %>%
-        mutate(pct = 100 * total / sum(total))
+    # Reshape into long format for geom_parallel_sets
+    dt_long <- gather_set_data(dt_trans, 1:2)
+    dt_long$x <- factor(dt_long$x, levels = c(start_label, end_label))
 
-    # Create all nodes with proper ordering
-    nodes <- bind_rows(
-        tibble(value = all_values, timepoint = start_label) %>%
-            left_join(start_totals, by = c("value" = "start_value")) %>%
-            filter(!is.na(total)),
-        tibble(value = all_values, timepoint = end_label) %>%
-            left_join(end_totals, by = c("value" = "end_value")) %>%
-            filter(!is.na(total))
-    ) %>%
-        arrange(match(value, value_order)) %>%
-        mutate(
-            name = sprintf("%s\nn=%d (%.1f%%)", value, total, pct),
-            group = value
-        ) %>%
-        select(name, group)
-
-    message(sprintf("Created %d nodes", nrow(nodes)))
-
-    links <- dt_transitions %>%
-        mutate(
-            source_name = sprintf(
-                "%s\nn=%d (%.1f%%)",
-                start_value,
-                start_totals$total[match(start_value, start_totals$start_value)],
-                start_totals$pct[match(start_value, start_totals$start_value)]
-            ),
-            target_name = sprintf(
-                "%s\nn=%d (%.1f%%)",
-                end_value,
-                end_totals$total[match(end_value, end_totals$end_value)],
-                end_totals$pct[match(end_value, end_totals$end_value)]
-            )
-        ) %>%
-        mutate(
-            source = match(source_name, nodes$name) - 1,
-            target = match(target_name, nodes$name) - 1,
-            value = n
-        ) %>%
-        # Filter out links with NA indices (nodes that were filtered out)
-        filter(!is.na(source), !is.na(target)) %>%
-        select(source, target, value)
-
-    message(sprintf("Created %d links", nrow(links)))
-
-    # Check for invalid indices
-    if (any(links$source < 0) || any(links$target < 0)) {
-        stop("Negative indices found in links!")
-    }
-    if (any(links$source >= nrow(nodes)) || any(links$target >= nrow(nodes))) {
-        stop("Out of bounds indices found in links!")
-    }
-
-    if (column %in% names(color_scales)) {
-        color_scale_js <- sprintf(
-            "d3.scaleOrdinal().domain([%s]).range([%s])",
-            paste0('"', names(color_scales[[column]]), '"', collapse = ","),
-            paste0('"', unname(color_scales[[column]]), '"', collapse = ",")
+    # --- Build base plot (ribbons + bars, no labels yet) ---
+    p_base <- ggplot(dt_long, aes(x, id = id, split = y, value = n)) +
+        geom_parallel_sets(
+            aes(fill = !!sym(start_label)),
+            alpha = 0.4, sep = 0.005, axis.width = AXIS_W, strength = 0.5, n = 100
+        ) +
+        geom_parallel_sets_axes(
+            sep = 0.005, axis.width = AXIS_W,
+            fill = "grey25", colour = "grey25"
         )
-    } else {
-        color_scale_js <- "d3.scaleOrdinal(d3.schemeCategory20)"
-    }
 
-    sankey_plot <- sankeyNetwork(
-        Links = links, Nodes = nodes,
-        Source = "source", Target = "target", Value = "value",
-        NodeID = "name", NodeGroup = "group", units = "individuals", fontSize = 11,
-        nodeWidth = 30, nodePadding = 15, iterations = 0,
-        colourScale = color_scale_js
+    # --- Extract axis bar positions and build label data ---
+    axes_raw <- layer_data(p_base, 2)
+    bars_df <- axes_raw %>%
+        distinct(label, xmin, xmax, ymin, ymax) %>%
+        mutate(
+            x_mid = (xmin + xmax) / 2,
+            y_mid = (ymin + ymax) / 2,
+            height = ymax - ymin,
+            axis_idx = round(x_mid)
+        )
+
+    # Join counts
+    bars_df <- bars_df %>%
+        left_join(all_counts, by = c("label" = "cat", "axis_idx"))
+
+    total_height <- max(bars_df$ymax) - min(bars_df$ymin)
+    bars_df$small <- bars_df$height / total_height < 0.05
+
+    # Labels: inside for large blocks, outside for small
+    bars_df$label_inside <- sprintf(
+        "%s\nn=%s\n(%.1f%%)",
+        bars_df$label,
+        formatC(bars_df$count, format = "d", big.mark = ","),
+        bars_df$pct
+    )
+    bars_df$label_outside <- sprintf(
+        "%s  n=%s (%.1f%%)",
+        bars_df$label,
+        formatC(bars_df$count, format = "d", big.mark = ","),
+        bars_df$pct
     )
 
-    return(sankey_plot)
-}
+    # Outside labels: left axis -> nudge left, right axis -> nudge right
+    nudge <- 0.02
+    bars_df$x_outside <- ifelse(
+        bars_df$axis_idx == 1,
+        bars_df$xmin - nudge,
+        bars_df$xmax + nudge
+    )
+    bars_df$hjust_outside <- ifelse(bars_df$axis_idx == 1, 1, 0)
 
-save_sankey_html <- function(sankey_plot, filepath) {
-    dir.create(dirname(filepath), showWarnings = FALSE, recursive = TRUE)
-    saveWidget(sankey_plot, filepath, selfcontained = TRUE)
-    message(sprintf("Saved HTML: %s", filepath))
-    return(filepath)
+    large <- bars_df[!bars_df$small, ]
+    small <- bars_df[bars_df$small, ]
+
+    # --- Assemble final plot ---
+    p <- p_base +
+        geom_text(
+            data = large,
+            aes(x = x_mid, y = y_mid, label = label_inside),
+            inherit.aes = FALSE,
+            colour = "white", size = 2.8, fontface = "bold", family = "mono",
+            lineheight = 0.85
+        ) +
+        geom_text(
+            data = small,
+            aes(x = x_outside, y = y_mid, label = label_outside, hjust = hjust_outside),
+            inherit.aes = FALSE,
+            colour = "grey25", size = 2.5, fontface = "bold", family = "mono"
+        ) +
+        scale_x_discrete(expand = expansion(mult = 0.15)) +
+        coord_cartesian(clip = "off") +
+        labs(title = title) +
+        theme_cowplot() +
+        theme(
+            plot.title = element_text(hjust = 0.5, size = 16, face = "bold", family = "mono"),
+            text = element_text(family = "mono"),
+            axis.text.x = element_text(size = 11, face = "bold", family = "mono"),
+            axis.text.y = element_blank(),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            axis.line = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.text = element_text(size = 10, family = "mono"),
+            plot.margin = margin(10, 120, 10, 120)
+        )
+
+    if (!is.null(colors_use)) {
+        p <- p + scale_fill_manual(values = colors_use, name = column)
+    }
+
+    # Save as PDF
+    if (!is.null(out_file)) {
+        dir.create(file.path("data", dirname(out_file)), showWarnings = FALSE, recursive = TRUE)
+        ggsave(
+            filename = file.path("data", out_file),
+            plot = p,
+            width = 297, height = 210, units = "mm", device = "pdf"
+        )
+        message("Saved plot to ", out_file)
+        upload_to_dx(file.path("data", out_file), out_file)
+    }
+
+    return(p)
 }

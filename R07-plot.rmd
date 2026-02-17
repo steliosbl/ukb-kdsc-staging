@@ -73,17 +73,13 @@ GP-linked participants.
 ```{r}
 source("lib/plot_sankey.R")
 
-sankey_stage <- plot_sankey_transitions(
+plot_sankey_transitions(
   dt_baseline, dt_10y,
   column = "stage",
   start_label = "Baseline",
-  end_label = "10y"
+  end_label = "10y",
+  out_file = "outputs/R07-sankey_stage.pdf"
 )
-
-out_file <- "data/outputs/R07-sankey_stage.html"
-dir.create(dirname(out_file), showWarnings = FALSE, recursive = TRUE)
-save_sankey_html(sankey_stage, out_file)
-# upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-sankey_stage.html")
 
 sankey_stage
 ```
@@ -94,12 +90,9 @@ sankey_kdigo <- plot_sankey_transitions(
   dt_baseline, dt_10y,
   column = "kdigo",
   start_label = "Baseline",
-  end_label = "10y"
+  end_label = "10y",
+  out_file = "outputs/R07-sankey_kdigo.pdf"
 )
-
-out_file <- "data/outputs/R07-sankey_kdigo.html"
-save_sankey_html(sankey_kdigo, out_file)
-# upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-sankey_kdigo.html")
 
 sankey_kdigo
 ```
@@ -110,12 +103,9 @@ sankey_risk <- plot_sankey_transitions(
   dt_baseline, dt_10y,
   column = "kdigo_risk",
   start_label = "Baseline",
-  end_label = "10y"
+  end_label = "10y",
+  out_file = "outputs/R07-sankey_risk.pdf"
 )
-
-out_file <- "data/outputs/R07-sankey_risk.html"
-save_sankey_html(sankey_risk, out_file)
-# upload_to_dx(out_file, "ukb-kdsc-staging/outputs/R07-sankey_risk.html")
 
 sankey_risk
 ```
