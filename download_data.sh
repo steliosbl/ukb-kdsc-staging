@@ -6,7 +6,7 @@ dx cd $DX_PROJECT_CONTEXT_ID
 
 dx download ukb-kdsc-staging/ -r 
 mv ukb-kdsc-staging/ data/ 
-
+mkdir -p data/extracted
 dx download common/Demographics/demographics.csv -o data/extracted
 dx download common/Biomarkers/biomarkers.csv -o data/extracted
 dx download common/"Follow-up"/follow_up.csv -o data/extracted
@@ -20,4 +20,3 @@ dx download common/"Primary Care"/gp_clinical_records.csv -o data/extracted
 
 git pull 
 Rscript -e "renv::restore()"
-Rscript -e "source(knitr::purl('R00-parameters.rmd', quiet = TRUE, output = tempfile()))"

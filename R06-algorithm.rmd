@@ -100,11 +100,21 @@ dt_flags <- bind_rows(
     values_fn = ~TRUE,
     values_fill = FALSE
   ) %>%
+  lazy_dt() %>%
   group_by(eid) %>%
-  arrange(date) %>%
+  arrange(date, .by_group = TRUE) %>%
+  as.data.table()
+
+logical_cols <- dt_flags %>%
+  select(-eid, -date, -source) %>%
+  select(where(is.logical)) %>%
+  colnames()
+
+dt_flags <- dt_flags %>%
+  lazy_dt() %>%
   mutate(across(
-    .cols = where(is.logical),
-    .fns = ~ cumsum(.) > 0
+    all_of(logical_cols),
+    ~ cumsum(.) > 0
   )) %>%
   group_by(eid, date) %>%
   slice_tail(n = 1) %>%
@@ -132,15 +142,18 @@ b. Two consecutive eGFR <= 90 at least 90 days apart
 ```{r}
 dt_eligible_egfr <- dt_egfr_acr %>%
   lazy_dt() %>%
-  filter(type == "egfr" & value <= 90) %>%
+  filter(type == "egfr") %>%
   arrange(eid, date) %>%
+  # Get consecutive pairs <= 90 at least 90 days apart
   group_by(eid) %>%
+  arrange(date, .by_group = TRUE) %>%
+  lazy_dt() %>%
   mutate(
+    qualifying = value <= 90,
+    prev_qualifying = lag(qualifying, default = FALSE),
     date_diff = as.numeric(difftime(date, lag(date), units = "days"))
-  ) %>%
-  filter(date_diff >= 90) %>%
-  summarise(n_pairs_90days_apart = n()) %>%
-  filter(n_pairs_90days_apart >= 1) %>%
+  ) %>% 
+  filter(qualifying & prev_qualifying & date_diff >= 90) %>%
   as.data.table()
 
 dt_eligible <- dt_flags %>%
