@@ -65,7 +65,7 @@ dialysis, congenital kidney disease, transplants, and kidney failure.
 codelist <- bind_rows(
   tibble(
     name = "coded_ckd",
-    code = c("N181", "N182", "N183", "N184", "N185", "N186", "N189"),
+    code = c("N180", "N181", "N182", "N183", "N184", "N185", "N186", "N189"),
     terminology = "icd10"
   ),
   tibble(
@@ -143,7 +143,7 @@ ckd_stage_codes <- list(
   stage_3 = "N183",
   stage_4 = "N184",
   stage_5 = "N185",
-  esrd = "N186",
+  esrd = c("N180", "N186"),
   nos = "N189"
 )
 

@@ -45,7 +45,7 @@ ckd_stage_codes <- list(
   stage_3 = "N183",
   stage_4 = "N184",
   stage_5 = "N185",
-  esrd = "N186",
+  esrd = c("N180", "N186"),
   nos = "N189"
 )
 ```
